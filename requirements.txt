@@ -1,0 +1,22 @@
+# Core
+networkx>=3.4.2
+requests>=2.32.3
+click>=8.1.0
+rich>=13.0.0
+
+# Config
+tomli>=2.2.1; python_version < "3.11"
+
+# Community detection
+python-louvain>=0.16
+
+# Document parsing (optional)
+PyMuPDF>=1.24.0
+beautifulsoup4>=4.12.0
+html2text>=2024.2.26
+
+# Claude integration (optional)
+anthropic>=0.40.0
+
+# Token counting (optional)
+tiktoken>=0.7.0
