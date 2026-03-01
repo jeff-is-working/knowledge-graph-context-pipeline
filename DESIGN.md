@@ -238,6 +238,55 @@ include_entity_metadata = true
 - Tests for each layer
 - MCP server (future)
 
+## Future Expansion: The Four Algebras of Defense
+
+Informed by John Lambert's (Microsoft) framework — "Building Attack Graphs and the Algebra of Defense." Lambert argues that defenders need four complementary data representations to flip the physics of cyber defense. KGCP currently implements two; phases 6-8 extend it to all four.
+
+> "Defenders think in lists. Attackers think in graphs. As long as this is true, attackers win." — John Lambert
+
+### Current Coverage
+
+| Algebra | Status | KGCP Implementation |
+|---|---|---|
+| **1. Relational Tables** | Implemented | SQLite storage with indexed triplets, entities, documents, and chunks |
+| **2. Graphs** | Implemented | SPO triplet extraction, NetworkX graph cache, N-hop traversal, community detection |
+| **3. Anomalies** | Not yet | — |
+| **4. Vectors Over Time** | Not yet | — |
+
+### Phase 6: Anomaly Detection (Algebra #3)
+
+Detect unusual entity relationships or new connections that deviate from established graph patterns.
+
+- **Baseline graph fingerprinting** — Snapshot community structure, centrality distributions, and relationship type frequencies as a baseline
+- **New-edge anomaly scoring** — When new triplets are ingested, score them against the baseline (e.g., a known entity appearing in an unexpected community or with an unusual predicate)
+- **Entity drift detection** — Flag entities whose relationship patterns shift significantly between ingestion batches
+- **Context packing integration** — Include anomaly scores in packed context so Claude can highlight what's new or unusual
+- **CLI**: `kgcp anomalies --since 2025-12-01` — surface relationships that deviate from the established graph
+
+### Phase 7: Temporal Analysis (Algebra #4)
+
+Add time-series awareness to track how threat actor TTPs, infrastructure, and targeting evolve.
+
+- **Temporal metadata on triplets** — Store `first_seen`, `last_seen`, and `observation_count` on each triplet
+- **Temporal queries** — "What changed in APT28's targeting in Q4?", "When did this entity first appear?"
+- **Trend detection** — Identify increasing/decreasing relationship frequencies over time (e.g., a threat actor shifting from one sector to another)
+- **Temporal context packing** — Include time-range context in packed output so Claude can reason about evolution
+- **CLI**: `kgcp query "APT28 targets" --since 2025-Q3 --until 2025-Q4` — scoped temporal retrieval
+
+### Phase 8: Cross-Algebra Fusion
+
+Lambert's key insight: AI can leverage all four algebras simultaneously, operating in a "much more highly dimensional space" than human analysts.
+
+- **Unified scoring** — Combine graph centrality (Algebra #2), anomaly score (Algebra #3), and temporal recency (Algebra #4) into a single relevance score for context packing
+- **Multi-algebra queries** — "Show me anomalous relationships involving APT28 that emerged in the last 90 days" — fuses graph traversal, anomaly detection, and temporal filtering
+- **Attack path reconstruction** — Use graph + temporal data to reconstruct the "red thread" of activity from siloed intelligence reports
+
+### References
+
+- John Lambert, "Changing the Physics of Cyber Defense" (Dec 2025): https://www.microsoft.com/en-us/security/blog/2025/12/09/changing-the-physics-of-cyber-defense/
+- GitHub: https://github.com/JohnLaTwC/Shared
+- Medium: https://medium.com/@johnlatwc/defenders-mindset-319854d10aaa
+
 ## Verification Criteria
 
 1. Ingest APT28 article → expect ~38 entities, ~105 triplets, 4 communities
