@@ -1,0 +1,134 @@
+---
+title: Developer Guide
+scope: Development setup, coding conventions, testing strategy, and module walkthrough for KGCP contributors
+last_updated: 2026-03-01
+---
+
+# Developer Guide
+
+## Development Setup
+
+For prerequisites, installation, and configuration, see [README Getting Started](../README.md#getting-started). After cloning and installing with `pip install -e ".[dev,all]"`, verify your setup by running the test suite.
+
+The `[dev]` extra installs pytest and pytest-cov. The `[all]` extra installs parsing (PyMuPDF, beautifulsoup4), Claude integration (anthropic), and token counting (tiktoken) dependencies.
+
+## Project Structure
+
+```
+kgcp/
+├── models.py                 # All dataclasses (Triplet, Document, Baseline, etc.)
+├── config.py                 # TOML config loading with defaults and env overrides
+├── cli.py                    # Click CLI entry point — all commands
+├── ingestion/                # Document parsing and chunking
+│   ├── parser_registry.py    # Extension-to-parser mapping
+│   ├── chunker.py            # Paragraph-aware text splitting
+│   └── parsers/              # Format-specific parsers
+├── extraction/               # LLM-based triplet extraction
+│   ├── extractor.py          # Orchestrates chunk→LLM→normalize→score→dedup
+│   ├── llm_client.py         # OpenAI-compatible API client
+│   ├── prompts.py            # System/user prompt templates
+│   ├── normalizer.py         # Entity standardization and deduplication
+│   └── confidence.py         # Heuristic confidence scoring
+├── storage/                  # Persistence layer
+│   ├── sqlite_store.py       # SQLiteStore — all CRUD, baselines, anomaly scores
+│   ├── graph_cache.py        # NetworkX in-memory graph (centrality, communities)
+│   └── schema.sql            # Table definitions
+├── retrieval/                # Query and ranking
+│   ├── retriever.py          # Keyword search + N-hop expansion + unified scoring
+│   ├── scorer.py             # Centrality and anomaly boosting functions
+│   ├── unified_scorer.py     # Cross-algebra fusion scoring engine
+│   └── attack_paths.py       # Temporally-ordered attack path reconstruction
+├── anomaly/                  # Anomaly detection (Algebra #3)
+│   ├── detector.py           # AnomalyDetector orchestrator
+│   ├── baseline.py           # Baseline creation from graph snapshot
+│   └── scorer.py             # 5-signal anomaly scoring
+├── temporal/                 # Temporal analysis (Algebra #4)
+│   ├── date_utils.py         # Flexible date parsing (ISO, quarter, relative)
+│   └── trends.py             # Frequency trend detection
+├── packing/                  # Context serialization
+│   ├── packer.py             # Format dispatcher
+│   ├── token_counter.py      # Token estimation (tiktoken or fallback)
+│   └── formats/
+│       ├── yaml_format.py    # YAML output (default)
+│       ├── compact_format.py # Arrow notation
+│       ├── markdown_format.py # Markdown table
+│       └── nl_format.py      # Natural language prose
+└── integration/              # Output delivery
+    ├── claude_api.py         # Anthropic SDK integration
+    └── output.py             # stdout / clipboard / file writing
+```
+
+## Coding Conventions
+
+**Language**: Python 3.10+ with `from __future__ import annotations` in every module for PEP 604 union syntax (`str | None`).
+
+**Data modeling**: All domain objects are `@dataclass` classes in `models.py`. UUIDs are generated via `uuid.uuid4()` default factories. Timestamps are ISO format UTC strings from `datetime.now(timezone.utc).isoformat()`.
+
+**Configuration**: All configurable values have defaults in the `DEFAULTS` dict in `config.py`. TOML config files override defaults via deep merge. Environment variables override four common settings (API key, LLM URL, model, DB path).
+
+**Logging**: Each module creates a logger via `logging.getLogger(__name__)`. CLI stderr output uses `click.echo(..., err=True)` for status messages.
+
+**Scoring**: All confidence and anomaly scores are floats clamped to [0.0, 1.0]. Scoring functions modify triplets in-place and return them for chaining.
+
+**Error handling**: LLM failures are caught and logged, returning empty results rather than crashing. Parser failures raise `ValueError` or `ImportError` with installation guidance.
+
+## Testing
+
+The test suite uses pytest with 218 tests across 17 files. Tests do not require an LLM endpoint — they exercise storage, retrieval, scoring, packing, anomaly detection, temporal analysis, and CLI commands using in-memory SQLite databases.
+
+Run the full suite from the project root:
+
+```bash
+.venv/bin/python -m pytest tests/ -v
+```
+
+Run a specific test file or test:
+
+```bash
+.venv/bin/python -m pytest tests/test_unified_scorer.py -v
+.venv/bin/python -m pytest tests/test_attack_paths.py::test_temporal_ordering -v
+```
+
+Run with coverage:
+
+```bash
+.venv/bin/python -m pytest tests/ --cov=kgcp --cov-report=term-missing
+```
+
+### Test Organization
+
+| Test File | Coverage Area | Count |
+|-----------|--------------|-------|
+| `test_models.py` | Dataclass construction and defaults | 5 |
+| `test_storage.py` | SQLiteStore CRUD operations | 7 |
+| `test_ingestion.py` | Parser registry, chunking | 6 |
+| `test_extraction.py` | Chunking, JSON extraction | 8 |
+| `test_confidence.py` | Confidence scoring heuristics | 5 |
+| `test_normalizer.py` | Entity normalization, dedup | 5 |
+| `test_graph_cache.py` | NetworkX graph operations | 5 |
+| `test_retrieval.py` | Query, hop expansion, unified scoring | 7 |
+| `test_packing.py` | All 4 output formats, budget, unified scores | 12 |
+| `test_anomaly_baseline.py` | Baseline creation | 8 |
+| `test_anomaly_scorer.py` | 5-signal anomaly scoring | 22 |
+| `test_anomaly_detector.py` | Detector orchestration | 10 |
+| `test_anomaly_storage.py` | Baseline/score persistence | 14 |
+| `test_temporal_storage.py` | Temporal upsert, backfill | 14 |
+| `test_temporal_date_utils.py` | Date parsing, time-range queries | 21 |
+| `test_temporal_trends.py` | Trend detection | 17 |
+| `test_unified_scorer.py` | Cross-algebra scoring | 25 |
+| `test_attack_paths.py` | Attack path reconstruction | 12 |
+| `test_fusion_cli.py` | CLI unified/paths commands | 9 |
+
+### Writing New Tests
+
+Follow existing patterns: use `tempfile.TemporaryDirectory` for test databases, create fixtures with `@pytest.fixture` that yield a populated `SQLiteStore`, and assert against model attributes rather than string output. CLI tests use Click's `CliRunner` to invoke commands in-process.
+
+## Common Development Tasks
+
+**Adding a new parser**: Register it in `kgcp/ingestion/parser_registry.py` by calling `register_parser(["ext"], parser_fn)` with a function that takes a `Path` and returns `str`.
+
+**Adding a new packing format**: Create a `pack_<name>()` function in `kgcp/packing/formats/`, add it to `FORMAT_REGISTRY` in `packer.py`, and add the format name to the `--format` Click choice in `cli.py`.
+
+**Adding a new anomaly signal**: Add a `_signal_<name>()` function in `kgcp/anomaly/scorer.py`, include it in the scoring loop, and add a default weight to the `signal_weights` section in `config.py` and `config.toml`.
+
+**Adjusting fusion weights**: Edit the `[fusion.weights]` section in `config.toml` or `DEFAULTS["fusion"]["weights"]` in `config.py`. Weights should sum to 1.0.
