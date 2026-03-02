@@ -280,13 +280,18 @@ Add time-series awareness to track how threat actor TTPs, infrastructure, and ta
 - **Config**: `[temporal]` section with `default_window_days` (90) and `min_trend_observations` (2)
 - **Tests**: 58 new tests (165 total) across 3 test files — temporal storage roundtrip/upsert, date parsing, trend detection
 
-### Phase 8: Cross-Algebra Fusion
+### Phase 8: Cross-Algebra Fusion — Complete
 
 Lambert's key insight: AI can leverage all four algebras simultaneously, operating in a "much more highly dimensional space" than human analysts.
 
-- **Unified scoring** — Combine graph centrality (Algebra #2), anomaly score (Algebra #3), and temporal recency (Algebra #4) into a single relevance score for context packing
-- **Multi-algebra queries** — "Show me anomalous relationships involving APT28 that emerged in the last 90 days" — fuses graph traversal, anomaly detection, and temporal filtering
-- **Attack path reconstruction** — Use graph + temporal data to reconstruct the "red thread" of activity from siloed intelligence reports
+- **Unified scoring engine** — `kgcp/retrieval/unified_scorer.py` combines four signals into a single weighted relevance score: extraction confidence (0.30), graph centrality (0.25), anomaly score (0.20), and temporal recency (0.25). Linear decay recency within configurable window. Scores clamped to [0,1], attached to triplet metadata as `unified_score` and `score_components`.
+- **Multi-algebra queries** — `kgcp query "APT28" --unified` fuses graph traversal, anomaly detection, and temporal filtering into cross-algebra ranked results. `--min-anomaly FLOAT` filters out low-anomaly triplets.
+- **Attack path reconstruction** — `kgcp/retrieval/attack_paths.py` reconstructs temporally-ordered attack chains from a seed entity via N-hop graph expansion, chronological sorting, and anomaly annotation. Returns `AttackPath` dataclass with steps, entities involved, time span, and total anomaly.
+- **CLI**: `kgcp query --unified [--min-anomaly FLOAT]` for cross-algebra scoring; `kgcp paths <entity> [--hops N] [--since DATE] [--until DATE] [--min-anomaly FLOAT] [--limit N] [--format timeline|yaml|json|compact] [--to-file PATH]` for attack path visualization
+- **Context packing integration** — All 4 output formats display unified scores when present: YAML `unified_scores:` section with component breakdown, compact `[score:0.87]` suffix, markdown `Score` column, NL `(relevance: 0.87)` qualifier
+- **Data models** — `ScoredTriplet` (triplet + unified score + components), `AttackPathStep` (triplet + timestamp + anomaly annotation), `AttackPath` (seed entity + ordered steps + time span + total anomaly)
+- **Config**: `[fusion]` section with tunable weights (`confidence`, `centrality`, `anomaly`, `recency`) and `recency_window_days` (90)
+- **Tests**: 53 new tests (218 total) across 5 test files — unified scorer recency/centrality/scoring, attack path reconstruction, CLI integration
 
 ### References
 
