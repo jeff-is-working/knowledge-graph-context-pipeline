@@ -250,18 +250,21 @@ Informed by John Lambert's (Microsoft) framework — "Building Attack Graphs and
 |---|---|---|
 | **1. Relational Tables** | Implemented | SQLite storage with indexed triplets, entities, documents, and chunks |
 | **2. Graphs** | Implemented | SPO triplet extraction, NetworkX graph cache, N-hop traversal, community detection |
-| **3. Anomalies** | Not yet | — |
+| **3. Anomalies** | Implemented | Baseline fingerprinting, 5-signal anomaly scoring, entity drift detection, CLI commands |
 | **4. Vectors Over Time** | Not yet | — |
 
-### Phase 6: Anomaly Detection (Algebra #3)
+### Phase 6: Anomaly Detection (Algebra #3) — Complete
 
-Detect unusual entity relationships or new connections that deviate from established graph patterns.
+Detect unusual entity relationships or new connections that deviate from established graph patterns. Purely computational (no LLM calls).
 
-- **Baseline graph fingerprinting** — Snapshot community structure, centrality distributions, and relationship type frequencies as a baseline
-- **New-edge anomaly scoring** — When new triplets are ingested, score them against the baseline (e.g., a known entity appearing in an unexpected community or with an unusual predicate)
-- **Entity drift detection** — Flag entities whose relationship patterns shift significantly between ingestion batches
-- **Context packing integration** — Include anomaly scores in packed context so Claude can highlight what's new or unusual
-- **CLI**: `kgcp anomalies --since 2025-12-01` — surface relationships that deviate from the established graph
+- **Baseline graph fingerprinting** — `kgcp baseline create` snapshots community partition, centrality scores, predicate histogram, edge set, and entity predicate patterns
+- **5-signal anomaly scoring** — Each triplet scored against baseline using weighted signals: new entity (0.30), new edge (0.25), community mismatch (0.20), unusual predicate (0.15), centrality drift (0.10)
+- **Entity drift detection** — `kgcp anomalies --entity <name>` reports community change, centrality delta, new/lost predicates, new neighbors
+- **Context packing integration** — All 4 output formats include anomaly data when present (YAML `anomalies:` section, compact `[!anomaly:0.85]` suffix, markdown Anomaly column, NL `(anomalous)` suffix)
+- **CLI**: `kgcp baseline create/list/show/delete`, `kgcp anomalies [--since DATE] [--min-score FLOAT] [--entity TEXT] [--format table|json|yaml]`, `kgcp stats --anomalies`, `kgcp query --anomalies`
+- **Storage**: `baselines` and `anomaly_scores` tables with cascade deletes, `get_triplets_since()` for incremental scoring
+- **Config**: Tunable signal weights and display thresholds in `[anomaly]` config section
+- **Tests**: 54 new tests (107 total) across 4 test files
 
 ### Phase 7: Temporal Analysis (Algebra #4)
 
