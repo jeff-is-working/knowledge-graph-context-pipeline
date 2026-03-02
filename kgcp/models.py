@@ -105,3 +105,34 @@ class AnomalyResult:
     subject: str = ""
     predicate: str = ""
     object: str = ""
+
+
+@dataclass
+class ScoredTriplet:
+    """Triplet with cross-algebra unified relevance score."""
+
+    triplet: Triplet
+    unified_score: float
+    components: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class AttackPathStep:
+    """A single step in an attack path reconstruction."""
+
+    triplet: Triplet
+    timestamp: str
+    anomaly_score: float = 0.0
+    anomaly_signals: dict[str, float] = field(default_factory=dict)
+    step_index: int = 0
+
+
+@dataclass
+class AttackPath:
+    """Temporally-ordered attack path from a seed entity."""
+
+    seed_entity: str
+    steps: list[AttackPathStep] = field(default_factory=list)
+    entities_involved: set[str] = field(default_factory=set)
+    time_span: tuple[str, str] = ("", "")
+    total_anomaly: float = 0.0

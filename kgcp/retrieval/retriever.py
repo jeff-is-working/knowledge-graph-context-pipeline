@@ -28,6 +28,9 @@ class Retriever:
         include_anomaly_scores: bool = False,
         since: str | None = None,
         until: str | None = None,
+        unified_scoring: bool = False,
+        fusion_weights: dict[str, float] | None = None,
+        min_anomaly_score: float | None = None,
     ) -> list[Triplet]:
         """Retrieve triplets relevant to a query.
 
@@ -36,6 +39,7 @@ class Retriever:
         2. Expand via N-hop traversal from seed entities.
         3. Score and rank by relevance.
         4. Filter by time range if since/until provided.
+        5. (Optional) Cross-algebra unified scoring.
 
         Args:
             query_text: Natural language query or entity name.
@@ -43,6 +47,9 @@ class Retriever:
             limit: Maximum triplets to return.
             since: ISO date string — exclude triplets last seen before this.
             until: ISO date string — exclude triplets first seen after this.
+            unified_scoring: Enable cross-algebra unified scoring.
+            fusion_weights: Override config fusion weights.
+            min_anomaly_score: Filter out triplets below this anomaly score.
 
         Returns:
             List of Triplets sorted by relevance (confidence * match score).
@@ -105,13 +112,39 @@ class Retriever:
         # Step 3: Score by relevance to query
         scored = self._score_relevance(all_triplets, query_terms)
 
-        # Step 4: Attach anomaly scores if requested
-        if include_anomaly_scores:
+        # Step 4: Attach anomaly scores if requested (or if unified scoring needs them)
+        if include_anomaly_scores or unified_scoring:
             self._attach_anomaly_scores(scored)
 
         # Step 5: Filter by time range if provided
         if since or until:
             scored = [t for t in scored if self._passes_temporal_filter(t, since, until)]
+
+        # Step 6: Cross-algebra unified scoring
+        if unified_scoring:
+            from .unified_scorer import (
+                compute_centrality_for_triplets,
+                compute_unified_scores,
+            )
+
+            entity_centrality = compute_centrality_for_triplets(scored)
+            anomaly_map = {
+                t.triplet_id: t.metadata.get("anomaly_score", 0.0) for t in scored
+            }
+            compute_unified_scores(
+                scored,
+                entity_centrality,
+                anomaly_map,
+                weights=fusion_weights,
+                apply_to_confidence=True,
+            )
+
+        # Step 7: Filter by minimum anomaly score if set
+        if min_anomaly_score is not None:
+            scored = [
+                t for t in scored
+                if t.metadata.get("anomaly_score", 0.0) >= min_anomaly_score
+            ]
 
         # Sort by combined score and limit
         scored.sort(key=lambda t: t.confidence, reverse=True)

@@ -63,6 +63,15 @@ DEFAULTS: dict[str, Any] = {
         "default_window_days": 90,
         "min_trend_observations": 2,
     },
+    "fusion": {
+        "weights": {
+            "confidence": 0.30,
+            "centrality": 0.25,
+            "anomaly": 0.20,
+            "recency": 0.25,
+        },
+        "recency_window_days": 90,
+    },
 }
 
 

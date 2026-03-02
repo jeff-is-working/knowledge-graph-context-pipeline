@@ -125,6 +125,28 @@ def pack_yaml(
         if estimate_tokens(candidate) <= budget:
             lines.extend(anom_lines)
 
+    # Unified scores section (conditional — only when unified scoring was applied)
+    has_unified = any(
+        "unified_score" in t.metadata for t in triplets[:included_count]
+    )
+    if has_unified:
+        scored = [
+            t for t in triplets[:included_count] if "unified_score" in t.metadata
+        ]
+        scored.sort(key=lambda t: t.metadata["unified_score"], reverse=True)
+        unified_lines = ["unified_scores:"]
+        for t in scored[:10]:
+            us = t.metadata["unified_score"]
+            unified_lines.append(f"  - score: {us}")
+            unified_lines.append(f"    triplet: [{t.subject}, {t.predicate}, {t.object}]")
+            components = t.metadata.get("score_components", {})
+            if components:
+                parts = ", ".join(f"{k}: {v}" for k, v in sorted(components.items()))
+                unified_lines.append(f"    components: {{{parts}}}")
+        candidate = "\n".join(lines + unified_lines)
+        if estimate_tokens(candidate) <= budget:
+            lines.extend(unified_lines)
+
     # Temporal section (conditional — only when temporal data is present)
     has_temporal = any(
         t.first_seen and t.observation_count > 0 for t in triplets[:included_count]

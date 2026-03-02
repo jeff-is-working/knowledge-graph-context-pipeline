@@ -36,6 +36,9 @@ def pack_compact(
         anomaly_score = t.metadata.get("anomaly_score", 0)
         if anomaly_score > 0:
             line += f" [!anomaly:{anomaly_score:.2f}]"
+        unified_score = t.metadata.get("unified_score")
+        if unified_score is not None:
+            line += f" [score:{unified_score:.2f}]"
         candidate = "\n".join(lines + [line])
         if estimate_tokens(candidate) > budget:
             break

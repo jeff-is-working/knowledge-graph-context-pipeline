@@ -62,3 +62,35 @@ def test_no_results(populated_store):
     retriever = Retriever(populated_store)
     results = retriever.query("completely unrelated query xyz123", hops=0)
     assert len(results) == 0
+
+
+def test_default_behavior_unchanged(populated_store):
+    """New params should not alter default behavior."""
+    retriever = Retriever(populated_store)
+    results = retriever.query("apt28", hops=1)
+    assert len(results) > 0
+    # No unified_score in metadata by default
+    for t in results:
+        assert "unified_score" not in t.metadata
+
+
+def test_unified_scoring_attaches_metadata(populated_store):
+    """With unified_scoring=True, triplets should have unified_score in metadata."""
+    retriever = Retriever(populated_store)
+    results = retriever.query("apt28", hops=1, unified_scoring=True)
+    assert len(results) > 0
+    for t in results:
+        assert "unified_score" in t.metadata
+        assert "score_components" in t.metadata
+        assert 0.0 <= t.metadata["unified_score"] <= 1.0
+
+
+def test_min_anomaly_score_filters(populated_store):
+    """min_anomaly_score should filter out triplets below the threshold."""
+    retriever = Retriever(populated_store)
+    # With a very high threshold, should get few or no results
+    # (no anomaly scores have been computed, all default to 0.0)
+    results = retriever.query("apt28", hops=1, min_anomaly_score=0.5)
+    # All results should have anomaly_score >= 0.5 (likely none without a baseline)
+    for t in results:
+        assert t.metadata.get("anomaly_score", 0.0) >= 0.5

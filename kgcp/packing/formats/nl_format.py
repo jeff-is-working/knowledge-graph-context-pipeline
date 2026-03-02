@@ -32,6 +32,9 @@ def pack_natural_language(
             sentence = sentence.rstrip(".") + f" (since {date_part}, observed {t.observation_count} times)."
         if t.metadata.get("anomaly_score", 0) > 0:
             sentence = sentence.rstrip(".") + " (anomalous)."
+        unified_score = t.metadata.get("unified_score")
+        if unified_score is not None:
+            sentence = sentence.rstrip(".") + f" (relevance: {unified_score:.2f})."
         candidate = " ".join(sentences + [sentence])
         if estimate_tokens(candidate) > budget:
             break

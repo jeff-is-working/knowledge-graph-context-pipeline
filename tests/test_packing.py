@@ -79,3 +79,50 @@ def test_empty_triplets():
 def test_estimate_tokens():
     assert estimate_tokens("hello world") > 0
     assert estimate_tokens("a" * 100) > estimate_tokens("a" * 10)
+
+
+def _sample_triplets_with_unified_scores():
+    """Sample triplets with unified_score in metadata."""
+    triplets = [
+        Triplet(
+            subject="apt28", predicate="targets", object="energy sector",
+            doc_id="d1", confidence=0.87,
+            metadata={"unified_score": 0.87, "score_components": {
+                "confidence": 0.9, "centrality": 0.5, "anomaly": 0.6, "recency": 0.8
+            }},
+        ),
+        Triplet(
+            subject="apt28", predicate="uses", object="credential harvesting",
+            doc_id="d1", confidence=0.72,
+            metadata={"unified_score": 0.72, "score_components": {
+                "confidence": 0.8, "centrality": 0.3, "anomaly": 0.4, "recency": 0.7
+            }},
+        ),
+    ]
+    return triplets
+
+
+def test_yaml_unified_scores():
+    """YAML format should include unified_scores section."""
+    ctx = pack_yaml(_sample_triplets_with_unified_scores(), budget=4096)
+    assert "unified_scores:" in ctx.content
+    assert "components:" in ctx.content
+
+
+def test_compact_unified_score_suffix():
+    """Compact format should append [score:X.XX] when unified_score present."""
+    ctx = pack_compact(_sample_triplets_with_unified_scores(), budget=4096)
+    assert "[score:0.87]" in ctx.content
+
+
+def test_markdown_score_column():
+    """Markdown format should include Score column when unified scores present."""
+    ctx = pack_markdown(_sample_triplets_with_unified_scores(), budget=4096)
+    assert "| Score |" in ctx.content
+    assert "0.87" in ctx.content
+
+
+def test_nl_relevance_qualifier():
+    """NL format should append (relevance: X.XX) when unified score present."""
+    ctx = pack_natural_language(_sample_triplets_with_unified_scores(), budget=4096)
+    assert "(relevance: 0.87)" in ctx.content

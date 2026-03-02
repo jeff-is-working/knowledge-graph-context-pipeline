@@ -21,6 +21,7 @@ def pack_markdown(
 
     has_anomalies = any(t.metadata.get("anomaly_score", 0) > 0 for t in triplets)
     has_temporal = any(t.first_seen and t.observation_count > 0 for t in triplets)
+    has_unified = any("unified_score" in t.metadata for t in triplets)
 
     # Build header based on available columns
     cols = ["Subject", "Predicate", "Object", "Confidence"]
@@ -28,6 +29,8 @@ def pack_markdown(
         cols.extend(["First Seen", "Obs"])
     if has_anomalies:
         cols.append("Anomaly")
+    if has_unified:
+        cols.append("Score")
     header = "| " + " | ".join(cols) + " |\n|" + "|".join(["---"] * len(cols)) + "|\n"
 
     lines = [header]
@@ -43,6 +46,9 @@ def pack_markdown(
         if has_anomalies:
             anom = t.metadata.get("anomaly_score", 0)
             parts.append(f"{anom:.2f}" if anom > 0 else "")
+        if has_unified:
+            us = t.metadata.get("unified_score")
+            parts.append(f"{us:.2f}" if us is not None else "")
         row = "| " + " | ".join(parts) + " |"
         candidate = "".join(lines) + row + "\n"
         if estimate_tokens(candidate) > budget:

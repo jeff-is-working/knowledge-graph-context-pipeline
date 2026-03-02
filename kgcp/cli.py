@@ -10,6 +10,7 @@ Usage:
     kgcp baseline show [ID]         Show baseline details
     kgcp baseline delete ID         Delete a baseline
     kgcp anomalies                  Surface anomalous relationships
+    kgcp paths <entity>             Reconstruct attack paths
 """
 
 from __future__ import annotations
@@ -165,8 +166,10 @@ def ingest(ctx, path, recursive, source_label):
 @click.option("--anomalies", is_flag=True, help="Include anomaly scores in output")
 @click.option("--since", default=None, help="Filter triplets observed after this date (ISO, quarter, or relative like 90d)")
 @click.option("--until", default=None, help="Filter triplets first seen before this date (ISO, quarter, or relative)")
+@click.option("--unified", is_flag=True, help="Enable cross-algebra unified scoring")
+@click.option("--min-anomaly", default=None, type=float, help="Minimum anomaly score threshold")
 @click.pass_context
-def query(ctx, query_text, budget, fmt, hops, to_clipboard, to_file, anomalies, since, until):
+def query(ctx, query_text, budget, fmt, hops, to_clipboard, to_file, anomalies, since, until, unified, min_anomaly):
     """Query the knowledge graph and get packed context."""
     from .temporal.date_utils import parse_date
 
@@ -191,10 +194,17 @@ def query(ctx, query_text, budget, fmt, hops, to_clipboard, to_file, anomalies, 
             store.close()
             return
 
+    # Read fusion weights from config
+    fusion_weights = None
+    if unified:
+        fusion_weights = config.get("fusion", {}).get("weights")
+
     retriever = Retriever(store)
     triplets = retriever.query(
         query_text, hops=hops, include_anomaly_scores=anomalies,
         since=parsed_since, until=parsed_until,
+        unified_scoring=unified, fusion_weights=fusion_weights,
+        min_anomaly_score=min_anomaly,
     )
 
     if not triplets:
@@ -637,6 +647,155 @@ def trends(ctx, entity, window, min_observations, since, until, fmt, limit):
                 f"{t.entity[:20]:20s}  {t.predicate[:20]:20s}  {t.direction:12s}  "
                 f"{t.change_ratio:+8.2f}  [{windows_str}]"
             )
+
+    store.close()
+
+
+@cli.command()
+@click.argument("entity")
+@click.option("--hops", default=2, type=int, help="Graph traversal hops (default: 2)")
+@click.option("--since", default=None, help="Only include steps after this date (ISO, quarter, or relative)")
+@click.option("--until", default=None, help="Only include steps before this date")
+@click.option("--min-anomaly", default=0.0, type=float, help="Minimum anomaly score for steps")
+@click.option("--limit", default=100, type=int, help="Maximum number of steps")
+@click.option(
+    "--format", "-f", "fmt",
+    default="timeline",
+    type=click.Choice(["timeline", "yaml", "json", "compact"], case_sensitive=False),
+    help="Output format (default: timeline)",
+)
+@click.option("--to-file", default=None, help="Write output to file")
+@click.option("--budget", "-b", default=2048, type=int, help="Token budget for yaml format")
+@click.pass_context
+def paths(ctx, entity, hops, since, until, min_anomaly, limit, fmt, to_file, budget):
+    """Reconstruct temporally-ordered attack paths from a seed entity."""
+    import json as json_mod
+
+    from .retrieval.attack_paths import reconstruct_attack_path
+    from .temporal.date_utils import parse_date
+
+    config = ctx.obj["config"]
+    store = _get_store(config)
+
+    # Parse temporal filters
+    parsed_since = None
+    parsed_until = None
+    if since:
+        try:
+            parsed_since = parse_date(since)
+        except ValueError as e:
+            click.echo(f"Invalid --since value: {e}", err=True)
+            store.close()
+            return
+    if until:
+        try:
+            parsed_until = parse_date(until)
+        except ValueError as e:
+            click.echo(f"Invalid --until value: {e}", err=True)
+            store.close()
+            return
+
+    path = reconstruct_attack_path(
+        seed_entity=entity,
+        store=store,
+        hops=hops,
+        since=parsed_since,
+        until=parsed_until,
+        min_anomaly_score=min_anomaly,
+        limit=limit,
+    )
+
+    if not path.steps:
+        click.echo(f"No attack path found for entity '{entity}'.", err=True)
+        store.close()
+        return
+
+    click.echo(
+        f"Attack path from '{entity}': {len(path.steps)} steps, "
+        f"{len(path.entities_involved)} entities",
+        err=True,
+    )
+
+    if fmt == "json":
+        data = {
+            "seed_entity": path.seed_entity,
+            "total_anomaly": path.total_anomaly,
+            "time_span": {"start": path.time_span[0], "end": path.time_span[1]},
+            "entities_involved": sorted(path.entities_involved),
+            "steps": [
+                {
+                    "index": s.step_index,
+                    "timestamp": s.timestamp,
+                    "subject": s.triplet.subject,
+                    "predicate": s.triplet.predicate,
+                    "object": s.triplet.object,
+                    "anomaly_score": s.anomaly_score,
+                    "anomaly_signals": s.anomaly_signals,
+                }
+                for s in path.steps
+            ],
+        }
+        output = json_mod.dumps(data, indent=2)
+
+    elif fmt == "yaml":
+        lines = [
+            f"# Attack path from '{entity}'",
+            f"path_metadata:",
+            f"  seed_entity: {path.seed_entity}",
+            f"  total_anomaly: {path.total_anomaly}",
+            f"  entities: {len(path.entities_involved)}",
+            f"  time_span: [{path.time_span[0]}, {path.time_span[1]}]",
+            f"timeline:",
+        ]
+        for s in path.steps:
+            lines.append(f"  - step: {s.step_index}")
+            lines.append(f"    timestamp: {s.timestamp}")
+            lines.append(f"    triplet: [{s.triplet.subject}, {s.triplet.predicate}, {s.triplet.object}]")
+            if s.anomaly_score > 0:
+                lines.append(f"    anomaly_score: {s.anomaly_score}")
+                if s.anomaly_signals:
+                    sig_parts = ", ".join(
+                        f"{k}: {v}" for k, v in sorted(s.anomaly_signals.items()) if v > 0
+                    )
+                    lines.append(f"    signals: {{{sig_parts}}}")
+        output = "\n".join(lines)
+
+    elif fmt == "compact":
+        lines = []
+        for s in path.steps:
+            date_part = s.timestamp[:10] if len(s.timestamp) >= 10 else s.timestamp
+            line = f"{date_part}  {s.triplet.subject} -> {s.triplet.predicate} -> {s.triplet.object}"
+            if s.anomaly_score > 0:
+                line += f" [!anomaly:{s.anomaly_score:.2f}]"
+            lines.append(line)
+        output = "\n".join(lines)
+
+    else:
+        # timeline (default) — human-readable table
+        lines = [
+            f"Attack Path: {entity}",
+            f"Time Span: {path.time_span[0][:10] if path.time_span[0] else '?'} to "
+            f"{path.time_span[1][:10] if path.time_span[1] else '?'}",
+            f"Total Anomaly: {path.total_anomaly:.2f}",
+            "",
+            f"{'#':>3s}  {'Date':10s}  {'Score':>6s}  {'Subject':20s}  {'Predicate':20s}  {'Object':20s}",
+            "-" * 85,
+        ]
+        for s in path.steps:
+            date_part = s.timestamp[:10] if len(s.timestamp) >= 10 else s.timestamp
+            score_str = f"{s.anomaly_score:.2f}" if s.anomaly_score > 0 else "  -   "
+            lines.append(
+                f"{s.step_index:3d}  {date_part:10s}  {score_str:>6s}  "
+                f"{s.triplet.subject[:20]:20s}  {s.triplet.predicate[:20]:20s}  "
+                f"{s.triplet.object[:20]:20s}"
+            )
+        output = "\n".join(lines)
+
+    if to_file:
+        Path(to_file).write_text(output + "\n")
+        click.echo(f"Written to {to_file}", err=True)
+    else:
+        click.echo(output)
 
     store.close()
 
