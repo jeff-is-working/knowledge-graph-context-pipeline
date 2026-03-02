@@ -26,6 +26,10 @@ def pack_natural_language(
         sentence = f"{t.subject} {t.predicate} {t.object}."
         # Capitalize first letter
         sentence = sentence[0].upper() + sentence[1:]
+        # Temporal qualifier
+        if t.first_seen and t.observation_count > 1:
+            date_part = t.first_seen[:10] if len(t.first_seen) >= 10 else t.first_seen
+            sentence = sentence.rstrip(".") + f" (since {date_part}, observed {t.observation_count} times)."
         if t.metadata.get("anomaly_score", 0) > 0:
             sentence = sentence.rstrip(".") + " (anomalous)."
         candidate = " ".join(sentences + [sentence])

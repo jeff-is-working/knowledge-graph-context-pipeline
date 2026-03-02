@@ -20,21 +20,30 @@ def pack_markdown(
         )
 
     has_anomalies = any(t.metadata.get("anomaly_score", 0) > 0 for t in triplets)
+    has_temporal = any(t.first_seen and t.observation_count > 0 for t in triplets)
+
+    # Build header based on available columns
+    cols = ["Subject", "Predicate", "Object", "Confidence"]
+    if has_temporal:
+        cols.extend(["First Seen", "Obs"])
     if has_anomalies:
-        header = "| Subject | Predicate | Object | Confidence | Anomaly |\n|---|---|---|---|---|\n"
-    else:
-        header = "| Subject | Predicate | Object | Confidence |\n|---|---|---|---|\n"
+        cols.append("Anomaly")
+    header = "| " + " | ".join(cols) + " |\n|" + "|".join(["---"] * len(cols)) + "|\n"
+
     lines = [header]
     count = 0
     sources: set[str] = set()
 
     for t in triplets:
+        parts = [t.subject, t.predicate, t.object, f"{t.confidence:.2f}"]
+        if has_temporal:
+            fs = t.first_seen[:10] if t.first_seen and len(t.first_seen) >= 10 else (t.first_seen or "")
+            parts.append(fs)
+            parts.append(str(t.observation_count) if t.observation_count > 1 else "")
         if has_anomalies:
             anom = t.metadata.get("anomaly_score", 0)
-            anom_str = f"{anom:.2f}" if anom > 0 else ""
-            row = f"| {t.subject} | {t.predicate} | {t.object} | {t.confidence:.2f} | {anom_str} |"
-        else:
-            row = f"| {t.subject} | {t.predicate} | {t.object} | {t.confidence:.2f} |"
+            parts.append(f"{anom:.2f}" if anom > 0 else "")
+        row = "| " + " | ".join(parts) + " |"
         candidate = "".join(lines) + row + "\n"
         if estimate_tokens(candidate) > budget:
             break

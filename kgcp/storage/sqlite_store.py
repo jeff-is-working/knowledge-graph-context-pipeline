@@ -33,6 +33,33 @@ class SQLiteStore:
         schema_sql = SCHEMA_PATH.read_text()
         self.conn.executescript(schema_sql)
         self.conn.commit()
+        self._migrate_schema()
+
+    def _migrate_schema(self) -> None:
+        """Add temporal columns to existing databases (idempotent)."""
+        migrations = [
+            "ALTER TABLE triplets ADD COLUMN first_seen TEXT DEFAULT ''",
+            "ALTER TABLE triplets ADD COLUMN last_seen TEXT DEFAULT ''",
+            "ALTER TABLE triplets ADD COLUMN observation_count INTEGER DEFAULT 1",
+        ]
+        for sql in migrations:
+            try:
+                self.conn.execute(sql)
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+        self.conn.commit()
+        self._backfill_temporal()
+
+    def _backfill_temporal(self) -> None:
+        """Set first_seen/last_seen on existing triplets from their document's ingested_at."""
+        self.conn.execute(
+            "UPDATE triplets SET first_seen = ("
+            "  SELECT d.ingested_at FROM documents d WHERE d.doc_id = triplets.doc_id"
+            "), last_seen = ("
+            "  SELECT d.ingested_at FROM documents d WHERE d.doc_id = triplets.doc_id"
+            ") WHERE first_seen = '' OR first_seen IS NULL"
+        )
+        self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -111,8 +138,9 @@ class SQLiteStore:
     def add_triplet(self, triplet: Triplet) -> None:
         self.conn.execute(
             "INSERT OR REPLACE INTO triplets "
-            "(triplet_id, subject, predicate, object, confidence, chunk_id, doc_id, inferred, metadata) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(triplet_id, subject, predicate, object, confidence, chunk_id, doc_id, "
+            "inferred, metadata, first_seen, last_seen, observation_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 triplet.triplet_id,
                 triplet.subject,
@@ -123,6 +151,9 @@ class SQLiteStore:
                 triplet.doc_id,
                 triplet.inferred,
                 json.dumps(triplet.metadata),
+                triplet.first_seen,
+                triplet.last_seen,
+                triplet.observation_count,
             ),
         )
         self.conn.commit()
@@ -130,8 +161,9 @@ class SQLiteStore:
     def add_triplets(self, triplets: list[Triplet]) -> None:
         self.conn.executemany(
             "INSERT OR REPLACE INTO triplets "
-            "(triplet_id, subject, predicate, object, confidence, chunk_id, doc_id, inferred, metadata) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(triplet_id, subject, predicate, object, confidence, chunk_id, doc_id, "
+            "inferred, metadata, first_seen, last_seen, observation_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     t.triplet_id,
@@ -143,6 +175,9 @@ class SQLiteStore:
                     t.doc_id,
                     t.inferred,
                     json.dumps(t.metadata),
+                    t.first_seen,
+                    t.last_seen,
+                    t.observation_count,
                 )
                 for t in triplets
             ],
@@ -188,6 +223,57 @@ class SQLiteStore:
         ).fetchall()
         return [self._row_to_triplet(r) for r in rows]
 
+    def upsert_triplet(self, triplet: Triplet) -> None:
+        """Insert or update a triplet based on case-insensitive (subject, predicate, object) match.
+
+        If a matching triplet exists: update last_seen, increment observation_count,
+        keep the higher confidence, preserve first_seen and triplet_id.
+        Otherwise: insert normally.
+        """
+        row = self.conn.execute(
+            "SELECT triplet_id, first_seen, last_seen, observation_count, confidence "
+            "FROM triplets WHERE LOWER(subject) = LOWER(?) AND LOWER(predicate) = LOWER(?) "
+            "AND LOWER(object) = LOWER(?)",
+            (triplet.subject, triplet.predicate, triplet.object),
+        ).fetchone()
+
+        if row:
+            new_confidence = max(row["confidence"], triplet.confidence)
+            new_last_seen = max(row["last_seen"] or "", triplet.last_seen)
+            new_count = (row["observation_count"] or 1) + 1
+            self.conn.execute(
+                "UPDATE triplets SET last_seen = ?, observation_count = ?, confidence = ? "
+                "WHERE triplet_id = ?",
+                (new_last_seen, new_count, new_confidence, row["triplet_id"]),
+            )
+        else:
+            self.conn.execute(
+                "INSERT INTO triplets "
+                "(triplet_id, subject, predicate, object, confidence, chunk_id, doc_id, "
+                "inferred, metadata, first_seen, last_seen, observation_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    triplet.triplet_id,
+                    triplet.subject,
+                    triplet.predicate,
+                    triplet.object,
+                    triplet.confidence,
+                    triplet.source_chunk_id or None,
+                    triplet.doc_id,
+                    triplet.inferred,
+                    json.dumps(triplet.metadata),
+                    triplet.first_seen,
+                    triplet.last_seen,
+                    triplet.observation_count,
+                ),
+            )
+        self.conn.commit()
+
+    def upsert_triplets(self, triplets: list[Triplet]) -> None:
+        """Batch upsert — calls upsert_triplet for each."""
+        for t in triplets:
+            self.upsert_triplet(t)
+
     def _row_to_triplet(self, row: sqlite3.Row) -> Triplet:
         return Triplet(
             triplet_id=row["triplet_id"],
@@ -199,6 +285,9 @@ class SQLiteStore:
             doc_id=row["doc_id"],
             inferred=bool(row["inferred"]),
             metadata=json.loads(row["metadata"] or "{}"),
+            first_seen=row["first_seen"] or "",
+            last_seen=row["last_seen"] or "",
+            observation_count=row["observation_count"] or 1,
         )
 
     # -- Entities --------------------------------------------------------------
@@ -394,8 +483,47 @@ class SQLiteStore:
             return None
         return self._row_to_anomaly(row)
 
+    def get_triplets_in_range(
+        self, since: str | None = None, until: str | None = None
+    ) -> list[Triplet]:
+        """Get triplets within a time range based on temporal fields.
+
+        Uses last_seen >= since and first_seen <= until. Falls back to
+        document.ingested_at for triplets with empty temporal fields.
+        """
+        conditions = []
+        params: list[str] = []
+
+        if since:
+            conditions.append(
+                "(CASE WHEN t.last_seen != '' THEN t.last_seen "
+                "ELSE COALESCE(d.ingested_at, '') END) >= ?"
+            )
+            params.append(since)
+
+        if until:
+            conditions.append(
+                "(CASE WHEN t.first_seen != '' THEN t.first_seen "
+                "ELSE COALESCE(d.ingested_at, '') END) <= ?"
+            )
+            params.append(until)
+
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+        rows = self.conn.execute(
+            f"SELECT t.* FROM triplets t "
+            f"LEFT JOIN documents d ON t.doc_id = d.doc_id "
+            f"WHERE {where_clause} "
+            f"ORDER BY t.confidence DESC",
+            params,
+        ).fetchall()
+        return [self._row_to_triplet(r) for r in rows]
+
     def get_triplets_since(self, since: str) -> list[Triplet]:
-        """Get triplets from documents ingested after a given ISO date."""
+        """Get triplets from documents ingested after a given ISO date.
+
+        Backward-compatible: filters by document.ingested_at, not triplet temporal fields.
+        """
         rows = self.conn.execute(
             "SELECT t.* FROM triplets t "
             "JOIN documents d ON t.doc_id = d.doc_id "

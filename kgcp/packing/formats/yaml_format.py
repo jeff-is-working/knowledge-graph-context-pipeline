@@ -125,6 +125,31 @@ def pack_yaml(
         if estimate_tokens(candidate) <= budget:
             lines.extend(anom_lines)
 
+    # Temporal section (conditional — only when temporal data is present)
+    has_temporal = any(
+        t.first_seen and t.observation_count > 0 for t in triplets[:included_count]
+    )
+    if has_temporal:
+        temporal_triplets = [t for t in triplets[:included_count] if t.first_seen]
+        if temporal_triplets:
+            seen_dates = [t.first_seen for t in temporal_triplets if t.first_seen]
+            temporal_lines = ["temporal:"]
+            if seen_dates:
+                temporal_lines.append(f"  earliest: {min(seen_dates)}")
+                temporal_lines.append(f"  latest: {max(seen_dates)}")
+            # Recently first-seen triplets
+            recent = sorted(temporal_triplets, key=lambda t: t.first_seen, reverse=True)[:5]
+            if recent:
+                temporal_lines.append("  recently_observed:")
+                for t in recent:
+                    line = f"    - [{t.subject}, {t.predicate}, {t.object}]"
+                    if t.observation_count > 1:
+                        line += f"  # x{t.observation_count}"
+                    temporal_lines.append(line)
+            candidate = "\n".join(lines + temporal_lines)
+            if estimate_tokens(candidate) <= budget:
+                lines.extend(temporal_lines)
+
     # Header comment
     content = "\n".join(lines)
     token_count = estimate_tokens(content)

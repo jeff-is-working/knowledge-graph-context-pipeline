@@ -24,7 +24,10 @@ CREATE TABLE IF NOT EXISTS triplets (
     chunk_id TEXT REFERENCES chunks(chunk_id),
     doc_id TEXT NOT NULL REFERENCES documents(doc_id) ON DELETE CASCADE,
     inferred BOOLEAN DEFAULT 0,
-    metadata TEXT DEFAULT '{}'
+    metadata TEXT DEFAULT '{}',
+    first_seen TEXT DEFAULT '',
+    last_seen TEXT DEFAULT '',
+    observation_count INTEGER DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS entities (
@@ -65,3 +68,5 @@ CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks(doc_id);
 CREATE INDEX IF NOT EXISTS idx_anomaly_scores_score ON anomaly_scores(score DESC);
 CREATE INDEX IF NOT EXISTS idx_anomaly_scores_baseline ON anomaly_scores(baseline_id);
 CREATE INDEX IF NOT EXISTS idx_baselines_created ON baselines(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_triplets_first_seen ON triplets(first_seen);
+CREATE INDEX IF NOT EXISTS idx_triplets_last_seen ON triplets(last_seen);

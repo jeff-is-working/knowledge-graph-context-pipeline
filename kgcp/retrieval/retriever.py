@@ -26,6 +26,8 @@ class Retriever:
         hops: int = 2,
         limit: int = 200,
         include_anomaly_scores: bool = False,
+        since: str | None = None,
+        until: str | None = None,
     ) -> list[Triplet]:
         """Retrieve triplets relevant to a query.
 
@@ -33,11 +35,14 @@ class Retriever:
         1. Keyword search for seed triplets matching query terms.
         2. Expand via N-hop traversal from seed entities.
         3. Score and rank by relevance.
+        4. Filter by time range if since/until provided.
 
         Args:
             query_text: Natural language query or entity name.
             hops: Number of graph hops to expand from seed matches.
             limit: Maximum triplets to return.
+            since: ISO date string — exclude triplets last seen before this.
+            until: ISO date string — exclude triplets first seen after this.
 
         Returns:
             List of Triplets sorted by relevance (confidence * match score).
@@ -104,6 +109,10 @@ class Retriever:
         if include_anomaly_scores:
             self._attach_anomaly_scores(scored)
 
+        # Step 5: Filter by time range if provided
+        if since or until:
+            scored = [t for t in scored if self._passes_temporal_filter(t, since, until)]
+
         # Sort by combined score and limit
         scored.sort(key=lambda t: t.confidence, reverse=True)
         return scored[:limit]
@@ -123,6 +132,21 @@ class Retriever:
             # Cap at 1.0
             t.confidence = min(1.0, t.confidence + boost)
         return triplets
+
+    @staticmethod
+    def _passes_temporal_filter(
+        triplet: Triplet, since: str | None, until: str | None
+    ) -> bool:
+        """Check if a triplet falls within the given time range."""
+        if since:
+            last_seen = triplet.last_seen or triplet.first_seen or ""
+            if last_seen and last_seen < since:
+                return False
+        if until:
+            first_seen = triplet.first_seen or triplet.last_seen or ""
+            if first_seen and first_seen > until:
+                return False
+        return True
 
     def _attach_anomaly_scores(self, triplets: list[Triplet]) -> None:
         """Attach anomaly_score and anomaly_signals to triplet metadata."""

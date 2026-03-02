@@ -126,7 +126,7 @@ def ingest(ctx, path, recursive, source_label):
             for t in triplets:
                 t.metadata["source_path"] = str(file_path.name)
 
-            store.add_triplets(triplets)
+            store.upsert_triplets(triplets)
 
             # Update entity records
             for t in triplets:
@@ -163,14 +163,39 @@ def ingest(ctx, path, recursive, source_label):
 @click.option("--to-clipboard", is_flag=True, help="Copy to clipboard")
 @click.option("--to-file", default=None, help="Write to file")
 @click.option("--anomalies", is_flag=True, help="Include anomaly scores in output")
+@click.option("--since", default=None, help="Filter triplets observed after this date (ISO, quarter, or relative like 90d)")
+@click.option("--until", default=None, help="Filter triplets first seen before this date (ISO, quarter, or relative)")
 @click.pass_context
-def query(ctx, query_text, budget, fmt, hops, to_clipboard, to_file, anomalies):
+def query(ctx, query_text, budget, fmt, hops, to_clipboard, to_file, anomalies, since, until):
     """Query the knowledge graph and get packed context."""
+    from .temporal.date_utils import parse_date
+
     config = ctx.obj["config"]
     store = _get_store(config)
 
+    # Parse temporal filters
+    parsed_since = None
+    parsed_until = None
+    if since:
+        try:
+            parsed_since = parse_date(since)
+        except ValueError as e:
+            click.echo(f"Invalid --since value: {e}", err=True)
+            store.close()
+            return
+    if until:
+        try:
+            parsed_until = parse_date(until)
+        except ValueError as e:
+            click.echo(f"Invalid --until value: {e}", err=True)
+            store.close()
+            return
+
     retriever = Retriever(store)
-    triplets = retriever.query(query_text, hops=hops, include_anomaly_scores=anomalies)
+    triplets = retriever.query(
+        query_text, hops=hops, include_anomaly_scores=anomalies,
+        since=parsed_since, until=parsed_until,
+    )
 
     if not triplets:
         click.echo("No matching triplets found.", err=True)
@@ -520,6 +545,97 @@ def anomalies(ctx, since, min_score, limit, entity, fmt):
         for r in results:
             click.echo(
                 f"{r.score:6.2f}  {r.subject[:20]:20s}  {r.predicate[:20]:20s}  {r.object[:20]:20s}"
+            )
+
+    store.close()
+
+
+@cli.command()
+@click.option("--entity", default=None, help="Filter trends to a specific entity")
+@click.option("--window", default=None, type=int, help="Window size in days (default: from config)")
+@click.option("--min-observations", default=None, type=int, help="Minimum observations for a trend")
+@click.option("--since", default=None, help="Only include triplets after this date")
+@click.option("--until", default=None, help="Only include triplets before this date")
+@click.option(
+    "--format", "-f", "fmt",
+    default="table",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    help="Output format",
+)
+@click.option("--limit", default=20, type=int, help="Maximum trends to show")
+@click.pass_context
+def trends(ctx, entity, window, min_observations, since, until, fmt, limit):
+    """Detect frequency trends in entity-predicate relationships."""
+    import json as json_mod
+
+    from .temporal.date_utils import parse_date
+    from .temporal.trends import detect_trends
+
+    config = ctx.obj["config"]
+    store = _get_store(config)
+    temporal_config = config.get("temporal", {})
+
+    window_days = window or temporal_config.get("default_window_days", 90)
+    min_obs = min_observations or temporal_config.get("min_trend_observations", 2)
+
+    # Parse time filters
+    parsed_since = None
+    parsed_until = None
+    if since:
+        try:
+            parsed_since = parse_date(since)
+        except ValueError as e:
+            click.echo(f"Invalid --since value: {e}", err=True)
+            store.close()
+            return
+    if until:
+        try:
+            parsed_until = parse_date(until)
+        except ValueError as e:
+            click.echo(f"Invalid --until value: {e}", err=True)
+            store.close()
+            return
+
+    # Get triplets (optionally time-scoped)
+    if parsed_since or parsed_until:
+        triplets = store.get_triplets_in_range(since=parsed_since, until=parsed_until)
+    else:
+        triplets = store.get_all_triplets()
+
+    if not triplets:
+        click.echo("No triplets found.", err=True)
+        store.close()
+        return
+
+    results = detect_trends(
+        triplets, entity=entity, window_days=window_days, min_observations=min_obs,
+    )[:limit]
+
+    if not results:
+        click.echo("No trends detected.", err=True)
+        store.close()
+        return
+
+    if fmt == "json":
+        data = [
+            {
+                "entity": t.entity,
+                "predicate": t.predicate,
+                "direction": t.direction,
+                "change_ratio": round(t.change_ratio, 2),
+                "window_counts": t.window_counts,
+            }
+            for t in results
+        ]
+        click.echo(json_mod.dumps(data, indent=2))
+    else:
+        click.echo(f"{'Entity':20s}  {'Predicate':20s}  {'Direction':12s}  {'Change':>8s}  Windows")
+        click.echo("-" * 80)
+        for t in results:
+            windows_str = " ".join(str(c) for c in t.window_counts)
+            click.echo(
+                f"{t.entity[:20]:20s}  {t.predicate[:20]:20s}  {t.direction:12s}  "
+                f"{t.change_ratio:+8.2f}  [{windows_str}]"
             )
 
     store.close()

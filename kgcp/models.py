@@ -40,6 +40,9 @@ class Triplet:
     triplet_id: str = field(default_factory=_uuid)
     inferred: bool = False
     metadata: dict = field(default_factory=dict)
+    first_seen: str = field(default_factory=_now)
+    last_seen: str = field(default_factory=_now)
+    observation_count: int = 1
 
 
 @dataclass

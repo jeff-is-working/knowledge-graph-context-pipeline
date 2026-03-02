@@ -29,6 +29,10 @@ def pack_compact(
 
     for t in triplets:
         line = f"{t.subject} -> {t.predicate} -> {t.object}"
+        # Temporal suffix when observation_count > 1
+        if t.first_seen and t.observation_count > 1:
+            date_part = t.first_seen[:10] if len(t.first_seen) >= 10 else t.first_seen
+            line += f" [since:{date_part}, x{t.observation_count}]"
         anomaly_score = t.metadata.get("anomaly_score", 0)
         if anomaly_score > 0:
             line += f" [!anomaly:{anomaly_score:.2f}]"

@@ -59,6 +59,10 @@ DEFAULTS: dict[str, Any] = {
             "centrality_drift": 0.10,
         },
     },
+    "temporal": {
+        "default_window_days": 90,
+        "min_trend_observations": 2,
+    },
 }
 
 
