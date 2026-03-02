@@ -72,3 +72,33 @@ class PackedContext:
     triplet_count: int
     sources: list[str] = field(default_factory=list)
     entities: dict = field(default_factory=dict)
+
+
+@dataclass
+class Baseline:
+    """Graph fingerprint snapshot for anomaly detection."""
+
+    baseline_id: str = field(default_factory=_uuid)
+    label: str = ""
+    created_at: str = field(default_factory=_now)
+    community_partition: dict[str, int] = field(default_factory=dict)
+    centrality_scores: dict[str, float] = field(default_factory=dict)
+    predicate_histogram: dict[str, int] = field(default_factory=dict)
+    edge_set: set[tuple[str, str]] = field(default_factory=set)
+    entity_predicates: dict[str, set[str]] = field(default_factory=dict)
+    node_count: int = 0
+    edge_count: int = 0
+    community_count: int = 0
+
+
+@dataclass
+class AnomalyResult:
+    """Per-triplet anomaly assessment."""
+
+    triplet_id: str
+    score: float  # 0.0 (normal) to 1.0 (highly anomalous)
+    signals: dict[str, float] = field(default_factory=dict)
+    baseline_id: str = ""
+    subject: str = ""
+    predicate: str = ""
+    object: str = ""

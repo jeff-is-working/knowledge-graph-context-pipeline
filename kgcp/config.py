@@ -48,6 +48,17 @@ DEFAULTS: dict[str, Any] = {
         "include_provenance": True,
         "include_entity_metadata": True,
     },
+    "anomaly": {
+        "min_display_score": 0.3,
+        "anomaly_boost_weight": 0.1,
+        "signal_weights": {
+            "new_entity": 0.30,
+            "new_edge": 0.25,
+            "community_mismatch": 0.20,
+            "unusual_predicate": 0.15,
+            "centrality_drift": 0.10,
+        },
+    },
 }
 
 

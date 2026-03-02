@@ -26,6 +26,8 @@ def pack_natural_language(
         sentence = f"{t.subject} {t.predicate} {t.object}."
         # Capitalize first letter
         sentence = sentence[0].upper() + sentence[1:]
+        if t.metadata.get("anomaly_score", 0) > 0:
+            sentence = sentence.rstrip(".") + " (anomalous)."
         candidate = " ".join(sentences + [sentence])
         if estimate_tokens(candidate) > budget:
             break

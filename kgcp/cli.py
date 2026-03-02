@@ -5,6 +5,11 @@ Usage:
     kgcp query <text>               Query the knowledge graph
     kgcp stats                      Show graph statistics
     kgcp export                     Export the graph
+    kgcp baseline create            Snapshot current graph
+    kgcp baseline list              Show all baselines
+    kgcp baseline show [ID]         Show baseline details
+    kgcp baseline delete ID         Delete a baseline
+    kgcp anomalies                  Surface anomalous relationships
 """
 
 from __future__ import annotations
@@ -15,9 +20,10 @@ from pathlib import Path
 
 import click
 
+from .anomaly.detector import AnomalyDetector
 from .config import load_config
 from .extraction.confidence import infer_entity_type
-from .extraction.extractor import ingest_text
+from .extraction.extractor import extract_from_chunks, ingest_text
 from .ingestion.chunker import chunk_text_paragraphs
 from .ingestion.parser_registry import parse_file, supported_extensions
 from .integration.output import output_context
@@ -112,8 +118,8 @@ def ingest(ctx, path, recursive, source_label):
         )
         store.add_chunks(chunks)
 
-        # Extract triplets
-        triplets = ingest_text(text, doc.doc_id, str(file_path), config)
+        # Extract triplets using the same chunks stored in DB
+        triplets = extract_from_chunks(chunks, config)
 
         if triplets:
             # Add source_path to metadata for provenance
@@ -156,14 +162,15 @@ def ingest(ctx, path, recursive, source_label):
 @click.option("--hops", default=2, help="Graph traversal hops (default: 2)")
 @click.option("--to-clipboard", is_flag=True, help="Copy to clipboard")
 @click.option("--to-file", default=None, help="Write to file")
+@click.option("--anomalies", is_flag=True, help="Include anomaly scores in output")
 @click.pass_context
-def query(ctx, query_text, budget, fmt, hops, to_clipboard, to_file):
+def query(ctx, query_text, budget, fmt, hops, to_clipboard, to_file, anomalies):
     """Query the knowledge graph and get packed context."""
     config = ctx.obj["config"]
     store = _get_store(config)
 
     retriever = Retriever(store)
-    triplets = retriever.query(query_text, hops=hops)
+    triplets = retriever.query(query_text, hops=hops, include_anomaly_scores=anomalies)
 
     if not triplets:
         click.echo("No matching triplets found.", err=True)
@@ -183,8 +190,9 @@ def query(ctx, query_text, budget, fmt, hops, to_clipboard, to_file):
 
 @cli.command()
 @click.option("--communities", is_flag=True, help="Show community breakdown")
+@click.option("--anomalies", is_flag=True, help="Show anomaly summary")
 @click.pass_context
-def stats(ctx, communities):
+def stats(ctx, communities, anomalies):
     """Show knowledge graph statistics."""
     config = ctx.obj["config"]
     store = _get_store(config)
@@ -222,6 +230,24 @@ def stats(ctx, communities):
                     click.echo(f"    ... and {len(entities) - 10} more")
         else:
             click.echo("No triplets in graph.")
+
+    if anomalies:
+        click.echo("\nAnomaly Summary")
+        click.echo("-" * 40)
+        detector = AnomalyDetector(store)
+        bl = detector.get_latest_baseline()
+        if bl:
+            click.echo(f"Latest Baseline:    {bl.baseline_id[:8]}... ({bl.created_at[:10]})")
+            min_score = config.get("anomaly", {}).get("min_display_score", 0.3)
+            scores = store.get_anomaly_scores(min_score=min_score, baseline_id=bl.baseline_id, limit=10)
+            if scores:
+                click.echo(f"Anomalous Triplets: {len(scores)} (score >= {min_score})")
+                for r in scores[:5]:
+                    click.echo(f"  {r.score:.2f}  {r.subject} -> {r.predicate} -> {r.object}")
+            else:
+                click.echo("No anomalous triplets found. Run 'kgcp anomalies' to score.")
+        else:
+            click.echo("No baseline. Run 'kgcp baseline create' first.")
 
     # Show recent documents
     docs = store.list_documents()
@@ -279,6 +305,222 @@ def export(ctx, fmt, output):
         click.echo(f"Exported {len(triplets)} triplets to {output}", err=True)
     else:
         click.echo(content)
+
+    store.close()
+
+
+@cli.group()
+def baseline():
+    """Manage graph baselines for anomaly detection."""
+    pass
+
+
+@baseline.command("create")
+@click.option("--label", "-l", default="", help="Label for the baseline")
+@click.pass_context
+def baseline_create(ctx, label):
+    """Snapshot the current graph as a baseline."""
+    config = ctx.obj["config"]
+    store = _get_store(config)
+    detector = AnomalyDetector(store)
+
+    bl = detector.create_and_save_baseline(label=label)
+    click.echo(f"Baseline created: {bl.baseline_id[:8]}...")
+    click.echo(f"  Nodes:       {bl.node_count}")
+    click.echo(f"  Edges:       {bl.edge_count}")
+    click.echo(f"  Communities: {bl.community_count}")
+    click.echo(f"  Predicates:  {len(bl.predicate_histogram)}")
+    store.close()
+
+
+@baseline.command("list")
+@click.pass_context
+def baseline_list(ctx):
+    """Show all saved baselines."""
+    config = ctx.obj["config"]
+    store = _get_store(config)
+    detector = AnomalyDetector(store)
+
+    baselines = detector.list_baselines()
+    if not baselines:
+        click.echo("No baselines found. Run 'kgcp baseline create' first.")
+        store.close()
+        return
+
+    click.echo(f"{'ID':10s}  {'Label':20s}  {'Nodes':>6s}  {'Edges':>6s}  {'Created':12s}")
+    click.echo("-" * 60)
+    for bl in baselines:
+        click.echo(
+            f"{bl.baseline_id[:8]:10s}  {bl.label[:20]:20s}  {bl.node_count:6d}  "
+            f"{bl.edge_count:6d}  {bl.created_at[:10]:12s}"
+        )
+    store.close()
+
+
+@baseline.command("show")
+@click.argument("baseline_id", required=False, default=None)
+@click.pass_context
+def baseline_show(ctx, baseline_id):
+    """Show baseline details (defaults to latest)."""
+    config = ctx.obj["config"]
+    store = _get_store(config)
+
+    if baseline_id:
+        # Try prefix match
+        baselines = store.list_baselines()
+        bl = None
+        for b in baselines:
+            if b.baseline_id.startswith(baseline_id):
+                bl = b
+                break
+        if not bl:
+            bl = store.get_baseline(baseline_id)
+    else:
+        bl = store.get_latest_baseline()
+
+    if not bl:
+        click.echo("No baseline found.", err=True)
+        store.close()
+        return
+
+    click.echo(f"Baseline: {bl.baseline_id}")
+    click.echo(f"Label:    {bl.label or '(none)'}")
+    click.echo(f"Created:  {bl.created_at}")
+    click.echo(f"Nodes:    {bl.node_count}")
+    click.echo(f"Edges:    {bl.edge_count}")
+    click.echo(f"Communities: {bl.community_count}")
+    click.echo(f"\nPredicate Histogram ({len(bl.predicate_histogram)} predicates):")
+    for pred, count in sorted(bl.predicate_histogram.items(), key=lambda x: -x[1])[:15]:
+        click.echo(f"  {count:4d}  {pred}")
+    if len(bl.predicate_histogram) > 15:
+        click.echo(f"  ... and {len(bl.predicate_histogram) - 15} more")
+
+    store.close()
+
+
+@baseline.command("delete")
+@click.argument("baseline_id")
+@click.pass_context
+def baseline_delete(ctx, baseline_id):
+    """Delete a baseline and its anomaly scores."""
+    config = ctx.obj["config"]
+    store = _get_store(config)
+
+    # Try prefix match
+    baselines = store.list_baselines()
+    target = None
+    for b in baselines:
+        if b.baseline_id.startswith(baseline_id):
+            target = b
+            break
+
+    if not target:
+        click.echo(f"Baseline '{baseline_id}' not found.", err=True)
+        store.close()
+        return
+
+    store.delete_baseline(target.baseline_id)
+    click.echo(f"Deleted baseline {target.baseline_id[:8]}...")
+    store.close()
+
+
+@cli.command()
+@click.option("--since", default=None, help="Only score triplets from docs ingested after this date (ISO)")
+@click.option("--min-score", default=0.3, type=float, help="Minimum anomaly score to display (default: 0.3)")
+@click.option("--limit", default=50, type=int, help="Maximum results to show")
+@click.option("--entity", default=None, help="Show drift analysis for a specific entity")
+@click.option(
+    "--format", "-f", "fmt",
+    default="table",
+    type=click.Choice(["table", "json", "yaml"], case_sensitive=False),
+    help="Output format",
+)
+@click.pass_context
+def anomalies(ctx, since, min_score, limit, entity, fmt):
+    """Surface anomalous relationships in the knowledge graph."""
+    import json as json_mod
+
+    config = ctx.obj["config"]
+    store = _get_store(config)
+    detector = AnomalyDetector(store)
+
+    bl = detector.get_latest_baseline()
+    if not bl:
+        click.echo("No baseline found. Run 'kgcp baseline create' first.", err=True)
+        store.close()
+        return
+
+    # Entity drift mode
+    if entity:
+        drift = detector.detect_entity_drift(entity, bl)
+        if fmt == "json":
+            click.echo(json_mod.dumps(drift, indent=2))
+        else:
+            click.echo(f"Entity Drift: {drift['entity']}")
+            click.echo("-" * 40)
+            if drift.get("community_change"):
+                cc = drift["community_change"]
+                click.echo(f"Community:    {cc['old']} -> {cc['new']}")
+            else:
+                click.echo("Community:    unchanged")
+            click.echo(f"Centrality:   {drift['centrality_delta']:+.4f}")
+            if drift["new_predicates"]:
+                click.echo(f"New predicates:  {', '.join(drift['new_predicates'])}")
+            if drift["lost_predicates"]:
+                click.echo(f"Lost predicates: {', '.join(drift['lost_predicates'])}")
+            if drift["new_neighbors"]:
+                click.echo(f"New neighbors:   {', '.join(drift['new_neighbors'])}")
+        store.close()
+        return
+
+    # Score triplets
+    if since:
+        results = detector.score_triplets_since(since, bl)
+    else:
+        results = detector.score_all_triplets(bl)
+
+    # Filter by min_score
+    results = [r for r in results if r.score >= min_score][:limit]
+
+    if not results:
+        click.echo(f"No anomalies found above score {min_score}.", err=True)
+        store.close()
+        return
+
+    click.echo(
+        f"Found {len(results)} anomalous triplets (score >= {min_score}, baseline {bl.baseline_id[:8]}...)",
+        err=True,
+    )
+
+    if fmt == "json":
+        data = [
+            {
+                "triplet_id": r.triplet_id[:8],
+                "score": r.score,
+                "subject": r.subject,
+                "predicate": r.predicate,
+                "object": r.object,
+                "signals": r.signals,
+            }
+            for r in results
+        ]
+        click.echo(json_mod.dumps(data, indent=2))
+    elif fmt == "yaml":
+        lines = ["anomalies:"]
+        for r in results:
+            lines.append(f"  - score: {r.score}")
+            lines.append(f"    triplet: [{r.subject}, {r.predicate}, {r.object}]")
+            sig_parts = ", ".join(f"{k}: {v}" for k, v in sorted(r.signals.items()) if v > 0)
+            lines.append(f"    signals: {{{sig_parts}}}")
+        click.echo("\n".join(lines))
+    else:
+        # Table format
+        click.echo(f"{'Score':>6s}  {'Subject':20s}  {'Predicate':20s}  {'Object':20s}")
+        click.echo("-" * 70)
+        for r in results:
+            click.echo(
+                f"{r.score:6.2f}  {r.subject[:20]:20s}  {r.predicate[:20]:20s}  {r.object[:20]:20s}"
+            )
 
     store.close()
 

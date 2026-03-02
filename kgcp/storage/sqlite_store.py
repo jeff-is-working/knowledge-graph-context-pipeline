@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..models import Document, DocumentChunk, Entity, Triplet
+from ..models import AnomalyResult, Baseline, Document, DocumentChunk, Entity, Triplet
 
 logger = logging.getLogger(__name__)
 
@@ -266,3 +266,152 @@ class SQLiteStore:
             "extracted_triplets": triplet_count - inferred_count,
             "avg_confidence": round(avg_confidence, 3) if avg_confidence else 0.0,
         }
+
+    # -- Baselines -------------------------------------------------------------
+
+    def add_baseline(self, baseline: Baseline) -> None:
+        edge_set_list = [list(pair) for pair in baseline.edge_set]
+        entity_preds = {k: list(v) for k, v in baseline.entity_predicates.items()}
+        self.conn.execute(
+            "INSERT OR REPLACE INTO baselines "
+            "(baseline_id, label, created_at, community_partition, centrality_scores, "
+            "predicate_histogram, edge_set, entity_predicates, node_count, edge_count, community_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                baseline.baseline_id,
+                baseline.label,
+                baseline.created_at,
+                json.dumps(baseline.community_partition),
+                json.dumps(baseline.centrality_scores),
+                json.dumps(baseline.predicate_histogram),
+                json.dumps(edge_set_list),
+                json.dumps(entity_preds),
+                baseline.node_count,
+                baseline.edge_count,
+                baseline.community_count,
+            ),
+        )
+        self.conn.commit()
+
+    def get_baseline(self, baseline_id: str) -> Baseline | None:
+        row = self.conn.execute(
+            "SELECT * FROM baselines WHERE baseline_id = ?", (baseline_id,)
+        ).fetchone()
+        if not row:
+            return None
+        return self._row_to_baseline(row)
+
+    def get_latest_baseline(self) -> Baseline | None:
+        row = self.conn.execute(
+            "SELECT * FROM baselines ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return None
+        return self._row_to_baseline(row)
+
+    def list_baselines(self) -> list[Baseline]:
+        rows = self.conn.execute(
+            "SELECT * FROM baselines ORDER BY created_at DESC"
+        ).fetchall()
+        return [self._row_to_baseline(r) for r in rows]
+
+    def delete_baseline(self, baseline_id: str) -> None:
+        self.conn.execute("DELETE FROM baselines WHERE baseline_id = ?", (baseline_id,))
+        self.conn.commit()
+
+    def _row_to_baseline(self, row: sqlite3.Row) -> Baseline:
+        edge_set_list = json.loads(row["edge_set"] or "[]")
+        entity_preds_raw = json.loads(row["entity_predicates"] or "{}")
+        return Baseline(
+            baseline_id=row["baseline_id"],
+            label=row["label"] or "",
+            created_at=row["created_at"],
+            community_partition=json.loads(row["community_partition"] or "{}"),
+            centrality_scores=json.loads(row["centrality_scores"] or "{}"),
+            predicate_histogram=json.loads(row["predicate_histogram"] or "{}"),
+            edge_set={tuple(pair) for pair in edge_set_list},
+            entity_predicates={k: set(v) for k, v in entity_preds_raw.items()},
+            node_count=row["node_count"],
+            edge_count=row["edge_count"],
+            community_count=row["community_count"],
+        )
+
+    # -- Anomaly Scores --------------------------------------------------------
+
+    def add_anomaly_scores(self, results: list[AnomalyResult]) -> None:
+        self.conn.executemany(
+            "INSERT OR REPLACE INTO anomaly_scores (triplet_id, baseline_id, score, signals) "
+            "VALUES (?, ?, ?, ?)",
+            [
+                (r.triplet_id, r.baseline_id, r.score, json.dumps(r.signals))
+                for r in results
+            ],
+        )
+        self.conn.commit()
+
+    def get_anomaly_scores(
+        self,
+        min_score: float = 0.0,
+        baseline_id: str | None = None,
+        limit: int = 100,
+    ) -> list[AnomalyResult]:
+        if baseline_id:
+            rows = self.conn.execute(
+                "SELECT a.*, t.subject, t.predicate, t.object "
+                "FROM anomaly_scores a JOIN triplets t ON a.triplet_id = t.triplet_id "
+                "WHERE a.score >= ? AND a.baseline_id = ? "
+                "ORDER BY a.score DESC LIMIT ?",
+                (min_score, baseline_id, limit),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT a.*, t.subject, t.predicate, t.object "
+                "FROM anomaly_scores a JOIN triplets t ON a.triplet_id = t.triplet_id "
+                "WHERE a.score >= ? "
+                "ORDER BY a.score DESC LIMIT ?",
+                (min_score, limit),
+            ).fetchall()
+        return [self._row_to_anomaly(r) for r in rows]
+
+    def get_anomaly_score_for_triplet(
+        self, triplet_id: str, baseline_id: str | None = None
+    ) -> AnomalyResult | None:
+        if baseline_id:
+            row = self.conn.execute(
+                "SELECT a.*, t.subject, t.predicate, t.object "
+                "FROM anomaly_scores a JOIN triplets t ON a.triplet_id = t.triplet_id "
+                "WHERE a.triplet_id = ? AND a.baseline_id = ?",
+                (triplet_id, baseline_id),
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT a.*, t.subject, t.predicate, t.object "
+                "FROM anomaly_scores a JOIN triplets t ON a.triplet_id = t.triplet_id "
+                "WHERE a.triplet_id = ? ORDER BY a.score DESC LIMIT 1",
+                (triplet_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return self._row_to_anomaly(row)
+
+    def get_triplets_since(self, since: str) -> list[Triplet]:
+        """Get triplets from documents ingested after a given ISO date."""
+        rows = self.conn.execute(
+            "SELECT t.* FROM triplets t "
+            "JOIN documents d ON t.doc_id = d.doc_id "
+            "WHERE d.ingested_at >= ? "
+            "ORDER BY t.confidence DESC",
+            (since,),
+        ).fetchall()
+        return [self._row_to_triplet(r) for r in rows]
+
+    def _row_to_anomaly(self, row: sqlite3.Row) -> AnomalyResult:
+        return AnomalyResult(
+            triplet_id=row["triplet_id"],
+            baseline_id=row["baseline_id"],
+            score=row["score"],
+            signals=json.loads(row["signals"] or "{}"),
+            subject=row["subject"],
+            predicate=row["predicate"],
+            object=row["object"],
+        )

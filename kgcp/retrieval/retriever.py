@@ -25,6 +25,7 @@ class Retriever:
         query_text: str,
         hops: int = 2,
         limit: int = 200,
+        include_anomaly_scores: bool = False,
     ) -> list[Triplet]:
         """Retrieve triplets relevant to a query.
 
@@ -99,6 +100,10 @@ class Retriever:
         # Step 3: Score by relevance to query
         scored = self._score_relevance(all_triplets, query_terms)
 
+        # Step 4: Attach anomaly scores if requested
+        if include_anomaly_scores:
+            self._attach_anomaly_scores(scored)
+
         # Sort by combined score and limit
         scored.sort(key=lambda t: t.confidence, reverse=True)
         return scored[:limit]
@@ -118,3 +123,14 @@ class Retriever:
             # Cap at 1.0
             t.confidence = min(1.0, t.confidence + boost)
         return triplets
+
+    def _attach_anomaly_scores(self, triplets: list[Triplet]) -> None:
+        """Attach anomaly_score and anomaly_signals to triplet metadata."""
+        baseline = self.store.get_latest_baseline()
+        if not baseline:
+            return
+        for t in triplets:
+            result = self.store.get_anomaly_score_for_triplet(t.triplet_id, baseline.baseline_id)
+            if result:
+                t.metadata["anomaly_score"] = result.score
+                t.metadata["anomaly_signals"] = result.signals

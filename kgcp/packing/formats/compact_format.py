@@ -29,6 +29,9 @@ def pack_compact(
 
     for t in triplets:
         line = f"{t.subject} -> {t.predicate} -> {t.object}"
+        anomaly_score = t.metadata.get("anomaly_score", 0)
+        if anomaly_score > 0:
+            line += f" [!anomaly:{anomaly_score:.2f}]"
         candidate = "\n".join(lines + [line])
         if estimate_tokens(candidate) > budget:
             break

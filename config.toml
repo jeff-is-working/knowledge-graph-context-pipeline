@@ -2,7 +2,7 @@
 # Copy to ~/.kgcp/config.toml for global defaults
 
 [llm]
-model = "gemma3"
+model = "gemma3:12b"
 api_key = "sk-1234"
 base_url = "http://localhost:11434/v1/chat/completions"
 max_tokens = 8192
@@ -31,3 +31,14 @@ default_format = "yaml"
 [packing]
 include_provenance = true
 include_entity_metadata = true
+
+[anomaly]
+min_display_score = 0.3
+anomaly_boost_weight = 0.1
+
+[anomaly.signal_weights]
+new_entity = 0.30
+new_edge = 0.25
+community_mismatch = 0.20
+unusual_predicate = 0.15
+centrality_drift = 0.10

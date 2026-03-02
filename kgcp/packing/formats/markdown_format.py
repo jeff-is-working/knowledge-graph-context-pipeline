@@ -19,13 +19,22 @@ def pack_markdown(
             triplet_count=0,
         )
 
-    header = "| Subject | Predicate | Object | Confidence |\n|---|---|---|---|\n"
+    has_anomalies = any(t.metadata.get("anomaly_score", 0) > 0 for t in triplets)
+    if has_anomalies:
+        header = "| Subject | Predicate | Object | Confidence | Anomaly |\n|---|---|---|---|---|\n"
+    else:
+        header = "| Subject | Predicate | Object | Confidence |\n|---|---|---|---|\n"
     lines = [header]
     count = 0
     sources: set[str] = set()
 
     for t in triplets:
-        row = f"| {t.subject} | {t.predicate} | {t.object} | {t.confidence:.2f} |"
+        if has_anomalies:
+            anom = t.metadata.get("anomaly_score", 0)
+            anom_str = f"{anom:.2f}" if anom > 0 else ""
+            row = f"| {t.subject} | {t.predicate} | {t.object} | {t.confidence:.2f} | {anom_str} |"
+        else:
+            row = f"| {t.subject} | {t.predicate} | {t.object} | {t.confidence:.2f} |"
         candidate = "".join(lines) + row + "\n"
         if estimate_tokens(candidate) > budget:
             break

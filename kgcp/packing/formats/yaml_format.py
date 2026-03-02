@@ -105,6 +105,26 @@ def pack_yaml(
         if estimate_tokens(candidate) <= budget:
             lines.extend(prov_lines)
 
+    # Anomalies section (conditional — only when anomaly data is present)
+    anomalous = [
+        t for t in triplets[:included_count]
+        if t.metadata.get("anomaly_score", 0) > 0
+    ]
+    if anomalous:
+        anomalous.sort(key=lambda t: t.metadata["anomaly_score"], reverse=True)
+        anom_lines = ["anomalies:"]
+        for t in anomalous[:10]:
+            score = t.metadata["anomaly_score"]
+            anom_lines.append(f"  - score: {score}")
+            anom_lines.append(f"    triplet: [{t.subject}, {t.predicate}, {t.object}]")
+            signals = t.metadata.get("anomaly_signals", {})
+            if signals:
+                sig_parts = ", ".join(f"{k}: {v}" for k, v in sorted(signals.items()) if v > 0)
+                anom_lines.append(f"    signals: {{{sig_parts}}}")
+        candidate = "\n".join(lines + anom_lines)
+        if estimate_tokens(candidate) <= budget:
+            lines.extend(anom_lines)
+
     # Header comment
     content = "\n".join(lines)
     token_count = estimate_tokens(content)
