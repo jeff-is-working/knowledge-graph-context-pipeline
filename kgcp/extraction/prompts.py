@@ -28,8 +28,8 @@ locations, concepts, tools, techniques.
 
 Return ONLY a JSON array:
 [
-  {"subject": "entity a", "predicate": "targets", "object": "entity b"},
-  {"subject": "entity c", "predicate": "uses", "object": "entity d"}
+  {{"subject": "entity a", "predicate": "targets", "object": "entity b"}},
+  {{"subject": "entity c", "predicate": "uses", "object": "entity d"}}
 ]
 
 Text:
