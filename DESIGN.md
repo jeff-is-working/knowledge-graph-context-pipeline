@@ -251,7 +251,7 @@ Informed by John Lambert's (Microsoft) framework — "Building Attack Graphs and
 | **1. Relational Tables** | Implemented | SQLite storage with indexed triplets, entities, documents, and chunks |
 | **2. Graphs** | Implemented | SPO triplet extraction, NetworkX graph cache, N-hop traversal, community detection |
 | **3. Anomalies** | Implemented | Baseline fingerprinting, 5-signal anomaly scoring, entity drift detection, CLI commands |
-| **4. Vectors Over Time** | Not yet | — |
+| **4. Vectors Over Time** | Implemented | Temporal fields on triplets, date parsing, trend detection, time-scoped queries |
 
 ### Phase 6: Anomaly Detection (Algebra #3) — Complete
 
@@ -266,15 +266,19 @@ Detect unusual entity relationships or new connections that deviate from establi
 - **Config**: Tunable signal weights and display thresholds in `[anomaly]` config section
 - **Tests**: 54 new tests (107 total) across 4 test files
 
-### Phase 7: Temporal Analysis (Algebra #4)
+### Phase 7: Temporal Analysis (Algebra #4) — Complete
 
 Add time-series awareness to track how threat actor TTPs, infrastructure, and targeting evolve.
 
-- **Temporal metadata on triplets** — Store `first_seen`, `last_seen`, and `observation_count` on each triplet
-- **Temporal queries** — "What changed in APT28's targeting in Q4?", "When did this entity first appear?"
-- **Trend detection** — Identify increasing/decreasing relationship frequencies over time (e.g., a threat actor shifting from one sector to another)
-- **Temporal context packing** — Include time-range context in packed output so Claude can reason about evolution
-- **CLI**: `kgcp query "APT28 targets" --since 2025-Q3 --until 2025-Q4` — scoped temporal retrieval
+- **Temporal metadata on triplets** — `first_seen`, `last_seen`, and `observation_count` fields on each triplet with idempotent schema migration and backfill from `document.ingested_at`
+- **Upsert with temporal tracking** — Re-ingesting a document updates `last_seen`, increments `observation_count`, and keeps the higher confidence (case-insensitive SPO matching)
+- **Flexible date parsing** — `kgcp/temporal/date_utils.py` supports ISO dates (`2025-01-15`), quarter notation (`2025-Q3`), and relative dates (`90d`, `6m`, `1y`)
+- **Time-range queries** — `get_triplets_in_range(since, until)` with fallback to `document.ingested_at` for triplets without temporal fields
+- **Trend detection** — `kgcp/temporal/trends.py` buckets triplets by time window, compares first-half vs second-half frequency, classifies as increasing/decreasing/new/gone/stable
+- **Temporal context packing** — All 4 output formats include conditional temporal annotations: YAML `temporal:` section with recently observed triplets, compact `[since:YYYY-MM-DD, xN]` suffix, markdown `First Seen`/`Obs` columns, NL `(since DATE, observed N times)` qualifier
+- **CLI**: `kgcp query "APT28" --since 2025-Q1 --until 2025-Q2` for time-scoped retrieval; `kgcp trends --entity apt28 --window 30 --format table|json` for frequency analysis
+- **Config**: `[temporal]` section with `default_window_days` (90) and `min_trend_observations` (2)
+- **Tests**: 58 new tests (165 total) across 3 test files — temporal storage roundtrip/upsert, date parsing, trend detection
 
 ### Phase 8: Cross-Algebra Fusion
 
