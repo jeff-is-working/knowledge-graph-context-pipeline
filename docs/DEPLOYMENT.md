@@ -1,7 +1,7 @@
 ---
 title: Deployment
 scope: Installation, LLM configuration, operations, and troubleshooting for KGCP
-last_updated: 2026-03-01
+last_updated: 2026-03-11
 ---
 
 # Deployment

@@ -1,7 +1,7 @@
 ---
 title: Developer Guide
 scope: Development setup, coding conventions, testing strategy, and module walkthrough for KGCP contributors
-last_updated: 2026-03-01
+last_updated: 2026-03-11
 ---
 
 # Developer Guide

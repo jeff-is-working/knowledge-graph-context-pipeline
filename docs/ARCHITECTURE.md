@@ -1,7 +1,7 @@
 ---
 title: Architecture
 scope: System design, data model, data flow, API surface, and design decisions for KGCP
-last_updated: 2026-03-01
+last_updated: 2026-03-11
 ---
 
 # Architecture
@@ -68,6 +68,8 @@ A typical query flows through these steps:
 5. **Temporal filtering** (optional) excludes triplets outside the since/until window
 6. **Unified scoring** (optional) computes a weighted fusion of confidence, centrality, anomaly, and recency
 7. **Packing** serializes the top-ranked triplets into the chosen format within the token budget
+
+For detailed sequence diagrams covering ingestion, querying, anomaly detection, and attack path reconstruction, see [Data Flow](DATA_FLOW.md).
 
 ## CLI Command Reference
 

@@ -1,7 +1,7 @@
 ---
 title: Security
 scope: Threat model, data protection, security controls, SBOM requirements, and incident response for KGCP
-last_updated: 2026-03-01
+last_updated: 2026-03-11
 ---
 
 # Security

@@ -1,7 +1,7 @@
 ---
 title: Software Bill of Materials
 scope: Dependency inventory, SBOM generation, license compliance, and supply chain security for KGCP
-last_updated: 2026-03-01
+last_updated: 2026-03-11
 ---
 
 # Software Bill of Materials (SBOM)

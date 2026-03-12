@@ -1,7 +1,7 @@
 ---
 title: KGCP — Knowledge Graph Context Pipeline
 scope: Project overview, getting started, CLI reference, and links to detailed documentation
-last_updated: 2026-03-01
+last_updated: 2026-03-11
 ---
 
 # Knowledge Graph Context Pipeline (KGCP)

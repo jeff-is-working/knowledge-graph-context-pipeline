@@ -1,7 +1,7 @@
 ---
 title: Documentation Index
 scope: Navigation hub for all KGCP project documentation
-last_updated: 2026-03-01
+last_updated: 2026-03-11
 ---
 
 # KGCP Documentation
@@ -16,11 +16,12 @@ last_updated: 2026-03-01
 | [Deployment](DEPLOYMENT.md) | Installation, LLM configuration, operations, troubleshooting |
 | [Security](SECURITY.md) | Threat model, data protection, security controls |
 | [SBOM](SBOM.md) | Dependency inventory, license compliance, vulnerability scanning |
+| [Data Flow](DATA_FLOW.md) | Mermaid sequence diagrams for ingestion, querying, anomaly detection, and attack paths |
 | [Design Journal](../DESIGN.md) | Phase-by-phase implementation history and Lambert's Four Algebras framework |
 
 ## Documentation Methodology
 
-These documents follow the Enterprise Documentation v1.2 methodology:
+These documents follow the Enterprise Documentation v1.3 methodology:
 
 - **YAML metadata** on every file with title, scope, and last-updated date
 - **Cross-reference, never duplicate** — each piece of information lives in exactly one place, with links between docs
