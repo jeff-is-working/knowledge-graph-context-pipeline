@@ -1174,6 +1174,22 @@ def export_thehive(ctx, entity, query_text, since, until, hops, alert_title, out
     store.close()
 
 
+@cli.command("serve-taxii")
+@click.option("--host", default=None, help="Bind address (default: 127.0.0.1)")
+@click.option("--port", default=None, type=int, help="Port (default: 9500)")
+@click.pass_context
+def serve_taxii(ctx, host, port):
+    """Start a read-only TAXII 2.1 server for STIX bundle distribution."""
+    from .server.taxii import run_server
+
+    config = ctx.obj["config"]
+    taxii_config = config.get("cti", {}).get("taxii", {})
+    host = host or taxii_config.get("host", "127.0.0.1")
+    port = port or taxii_config.get("port", 9500)
+
+    run_server(config=config, host=host, port=port)
+
+
 def main():
     cli()
 

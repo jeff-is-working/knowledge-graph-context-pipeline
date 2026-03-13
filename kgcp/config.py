@@ -99,6 +99,13 @@ DEFAULTS: dict[str, Any] = {
             "default_severity": 2,
             "default_tlp": 2,
         },
+        "taxii": {
+            "api_key": "",
+            "title": "KGCP TAXII 2.1 Server",
+            "host": "127.0.0.1",
+            "port": 9500,
+            "max_content_length": 10_000_000,
+        },
     },
 }
 
@@ -161,5 +168,7 @@ def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
         config.setdefault("cti", {}).setdefault("thehive", {})["url"] = env_val
     if env_val := os.environ.get("KGCP_THEHIVE_API_KEY"):
         config.setdefault("cti", {}).setdefault("thehive", {})["api_key"] = env_val
+    if env_val := os.environ.get("KGCP_TAXII_API_KEY"):
+        config.setdefault("cti", {}).setdefault("taxii", {})["api_key"] = env_val
 
     return config
