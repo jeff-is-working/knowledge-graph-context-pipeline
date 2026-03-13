@@ -65,6 +65,7 @@ class MISPExporter(BaseExporter):
         self.url = misp_config.get("url", "")
         self.api_key = misp_config.get("api_key", "")
         self.verify_ssl = misp_config.get("verify_ssl", True)
+        self.timeout = misp_config.get("timeout", 120)
         self.default_distribution = misp_config.get("default_distribution", 0)
         self.default_threat_level = misp_config.get("default_threat_level", 2)
         self.default_analysis = misp_config.get("default_analysis", 0)
@@ -115,9 +116,11 @@ class MISPExporter(BaseExporter):
     ) -> list[dict[str, Any]]:
         """Convert a triplet into MISP attributes for subject and object."""
         attributes: list[dict[str, Any]] = []
-        comment = f"{triplet.subject} {triplet.predicate} {triplet.object}"
+        subj = self._sanitize_entity_name(triplet.subject)
+        obj = self._sanitize_entity_name(triplet.object)
+        comment = f"{subj} {triplet.predicate} {obj}"
 
-        for entity_name in (triplet.subject, triplet.object):
+        for entity_name in (subj, obj):
             etype = entity_types.get(entity_name, "unknown")
             attr_type, category = _misp_attr_for_entity(etype)
             attr: dict[str, Any] = {
@@ -235,7 +238,7 @@ class MISPExporter(BaseExporter):
                 "use KGCP_MISP_URL and KGCP_MISP_API_KEY environment variables."
             )
 
-        misp = PyMISP(self.url, self.api_key, ssl=self.verify_ssl)
+        misp = PyMISP(self.url, self.api_key, ssl=self.verify_ssl, timeout=self.timeout)
 
         misp_event = MISPEvent()
         misp_event.from_dict(**data.get("Event", data))
@@ -243,7 +246,8 @@ class MISPExporter(BaseExporter):
         response = misp.add_event(misp_event)
 
         if isinstance(response, dict) and "errors" in response:
-            raise RuntimeError(f"MISP push failed: {response['errors']}")
+            raw_err = str(response["errors"])
+            raise RuntimeError(f"MISP push failed: {self._sanitize_error(raw_err)}")
 
         event_id = ""
         if isinstance(response, dict):

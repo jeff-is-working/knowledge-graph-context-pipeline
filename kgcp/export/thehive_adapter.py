@@ -110,6 +110,7 @@ class TheHiveExporter(BaseExporter):
         self.url = thehive_config.get("url", "")
         self.api_key = thehive_config.get("api_key", "")
         self.verify_ssl = thehive_config.get("verify_ssl", True)
+        self.timeout = thehive_config.get("timeout", 120)
         self.default_severity = thehive_config.get("default_severity", 2)
         self.default_tlp = thehive_config.get("default_tlp", 2)
 
@@ -117,14 +118,17 @@ class TheHiveExporter(BaseExporter):
         self, entity_name: str, entity_type: str, triplets: list[Triplet]
     ) -> dict:
         """Create a TheHive observable dict for an entity."""
+        entity_name = self._sanitize_entity_name(entity_name)
         data_type, type_tag = _ENTITY_TYPE_TO_OBSERVABLE.get(
             entity_type, _DEFAULT_OBSERVABLE
         )
 
         context_parts: list[str] = []
         for t in triplets:
-            if t.subject == entity_name or t.object == entity_name:
-                context_parts.append(f"{t.subject} {t.predicate} {t.object}")
+            subj = self._sanitize_entity_name(t.subject)
+            obj = self._sanitize_entity_name(t.object)
+            if subj == entity_name or obj == entity_name:
+                context_parts.append(f"{subj} {t.predicate} {obj}")
         message = "; ".join(context_parts[:5]) if context_parts else ""
 
         tags = [type_tag]
@@ -295,6 +299,7 @@ class TheHiveExporter(BaseExporter):
             )
 
         api = TheHiveApi(self.url, self.api_key, cert=self.verify_ssl)
+        api.session.timeout = self.timeout
 
         artifacts: list = []
         for obs in data.get("observables", []):
@@ -323,14 +328,15 @@ class TheHiveExporter(BaseExporter):
             logger.info("Alert created in TheHive: %s", data["title"])
             return response.json()
 
+        sanitized_msg = self._sanitize_error(response.text)
         logger.error(
             "Failed to create alert: %s %s",
-            response.status_code, response.text,
+            response.status_code, sanitized_msg,
         )
         return {
             "error": True,
             "status_code": response.status_code,
-            "message": response.text,
+            "message": sanitized_msg,
         }
 
     def to_file(self, data: Any, output_path: Path) -> None:

@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
 from ..models import AttackPath, Entity, Triplet
+
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+MAX_ENTITY_NAME_LEN = 512
+MAX_ERROR_MSG_LEN = 1000
 
 
 class BaseExporter(ABC):
@@ -14,6 +21,31 @@ class BaseExporter(ABC):
 
     def __init__(self, config: dict):
         self.config = config
+
+    @staticmethod
+    def _sanitize_entity_name(name: str) -> str:
+        """Sanitize an entity name before sending to external APIs.
+
+        Strips control characters, ANSI escapes, and enforces max length.
+        """
+        name = _ANSI_ESCAPE_RE.sub("", name)
+        name = _CONTROL_CHAR_RE.sub("", name)
+        name = name.strip()
+        if len(name) > MAX_ENTITY_NAME_LEN:
+            name = name[:MAX_ENTITY_NAME_LEN]
+        return name
+
+    @staticmethod
+    def _sanitize_error(message: str) -> str:
+        """Sanitize an error message from a remote server.
+
+        Strips ANSI escapes, control characters, and truncates.
+        """
+        message = _ANSI_ESCAPE_RE.sub("", message)
+        message = _CONTROL_CHAR_RE.sub("", message)
+        if len(message) > MAX_ERROR_MSG_LEN:
+            message = message[:MAX_ERROR_MSG_LEN] + "... (truncated)"
+        return message
 
     @abstractmethod
     def export_triplets(
@@ -49,8 +81,10 @@ class BaseExporter(ABC):
 
         entities: dict[str, str] = {}
         for t in triplets:
-            if t.subject not in entities:
-                entities[t.subject] = infer_entity_type(t.subject)
-            if t.object not in entities:
-                entities[t.object] = infer_entity_type(t.object)
+            subj = self._sanitize_entity_name(t.subject)
+            obj = self._sanitize_entity_name(t.object)
+            if subj not in entities:
+                entities[subj] = infer_entity_type(subj)
+            if obj not in entities:
+                entities[obj] = infer_entity_type(obj)
         return entities

@@ -145,8 +145,9 @@ class OpenCTIExporter(BaseExporter):
         result = resp.json()
         errors = result.get("errors")
         if errors:
+            raw_err = json.dumps(errors, indent=2)
             raise RuntimeError(
-                f"OpenCTI GraphQL errors: {json.dumps(errors, indent=2)}"
+                f"OpenCTI GraphQL errors: {self._sanitize_error(raw_err)}"
             )
 
         logger.info("Successfully imported bundle via REST GraphQL")
