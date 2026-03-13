@@ -978,6 +978,202 @@ def export_attack_map(ctx, entity, query_text, hops, max_matches, update, fmt):
     store.close()
 
 
+def _select_triplets(ctx, entity, query_text, hops, since=None, until=None):
+    """Shared helper: select triplets by entity, query, or full graph."""
+    from .temporal.date_utils import parse_date
+
+    config = ctx.obj["config"]
+    store = _get_store(config)
+
+    parsed_since = None
+    parsed_until = None
+    if since:
+        try:
+            parsed_since = parse_date(since)
+        except ValueError as e:
+            click.echo(f"Invalid --since value: {e}", err=True)
+            store.close()
+            return None, None, store
+    if until:
+        try:
+            parsed_until = parse_date(until)
+        except ValueError as e:
+            click.echo(f"Invalid --until value: {e}", err=True)
+            store.close()
+            return None, None, store
+
+    path = None
+    if entity:
+        from .retrieval.attack_paths import reconstruct_attack_path
+        path = reconstruct_attack_path(
+            seed_entity=entity, store=store, hops=hops,
+            since=parsed_since, until=parsed_until,
+        )
+        if not path.steps:
+            click.echo(f"No attack path found for '{entity}'.", err=True)
+            store.close()
+            return None, None, store
+        triplets = [s.triplet for s in path.steps]
+    elif query_text:
+        retriever = Retriever(store)
+        triplets = retriever.query(query_text, hops=hops)
+    else:
+        triplets = store.get_all_triplets()
+
+    if not triplets:
+        click.echo("No triplets found.", err=True)
+        store.close()
+        return None, None, store
+
+    return triplets, path, store
+
+
+@export_cti.command("misp")
+@click.option("--entity", default=None, help="Seed entity for attack path export")
+@click.option("--query", "query_text", default=None, help="Query text to select triplets")
+@click.option("--since", default=None, help="Filter triplets after this date")
+@click.option("--until", default=None, help="Filter triplets before this date")
+@click.option("--hops", default=2, type=int, help="Graph traversal hops")
+@click.option("--event-info", default=None, help="MISP event info/title")
+@click.option("--output", "-o", default=None, help="Output file path")
+@click.option("--push", "do_push", is_flag=True, help="Push to MISP instance")
+@click.pass_context
+def export_misp(ctx, entity, query_text, since, until, hops, event_info, output, do_push):
+    """Export triplets as a MISP event."""
+    import json as json_mod
+
+    from .export.misp_adapter import MISPExporter
+
+    config = ctx.obj["config"]
+    triplets, path, store = _select_triplets(ctx, entity, query_text, hops, since, until)
+    if triplets is None:
+        return
+
+    exporter = MISPExporter(config)
+    kwargs = {}
+    if event_info:
+        kwargs["info"] = event_info
+
+    if path:
+        click.echo(f"Exporting attack path as MISP event: {len(path.steps)} steps", err=True)
+        event = exporter.export_attack_path(path, **kwargs)
+    else:
+        click.echo(f"Exporting {len(triplets)} triplets as MISP event", err=True)
+        event = exporter.export_triplets(triplets, **kwargs)
+
+    if do_push:
+        try:
+            result = exporter.push(event)
+            click.echo(f"Pushed to MISP: event_id={result.get('event_id', 'unknown')}", err=True)
+        except (ImportError, ValueError, RuntimeError) as e:
+            click.echo(f"Push failed: {e}", err=True)
+    elif output:
+        exporter.to_file(event, Path(output))
+        click.echo(f"MISP event written to {output}", err=True)
+        click.echo(f"  Attributes: {len(event.get('Event', {}).get('Attribute', []))}", err=True)
+    else:
+        click.echo(json_mod.dumps(event, indent=2, default=str))
+
+    store.close()
+
+
+@export_cti.command("opencti")
+@click.option("--entity", default=None, help="Seed entity for attack path export")
+@click.option("--query", "query_text", default=None, help="Query text to select triplets")
+@click.option("--since", default=None, help="Filter triplets after this date")
+@click.option("--until", default=None, help="Filter triplets before this date")
+@click.option("--hops", default=2, type=int, help="Graph traversal hops")
+@click.option("--output", "-o", default=None, help="Output file path")
+@click.option("--push", "do_push", is_flag=True, help="Push to OpenCTI instance")
+@click.pass_context
+def export_opencti(ctx, entity, query_text, since, until, hops, output, do_push):
+    """Export triplets as an OpenCTI-enriched STIX 2.1 bundle."""
+    import json as json_mod
+
+    from .export.opencti_adapter import OpenCTIExporter
+
+    config = ctx.obj["config"]
+    triplets, path, store = _select_triplets(ctx, entity, query_text, hops, since, until)
+    if triplets is None:
+        return
+
+    exporter = OpenCTIExporter(config)
+
+    if path:
+        click.echo(f"Exporting attack path for OpenCTI: {len(path.steps)} steps", err=True)
+        bundle = exporter.export_attack_path(path)
+    else:
+        click.echo(f"Exporting {len(triplets)} triplets for OpenCTI", err=True)
+        bundle = exporter.export_triplets(triplets)
+
+    if do_push:
+        try:
+            result = exporter.push(bundle)
+            click.echo(f"Pushed to OpenCTI via {result.get('method', 'unknown')}", err=True)
+        except (ImportError, ValueError, RuntimeError) as e:
+            click.echo(f"Push failed: {e}", err=True)
+    elif output:
+        exporter.to_file(bundle, Path(output))
+        click.echo(f"OpenCTI bundle written to {output}", err=True)
+        click.echo(f"  Objects: {len(bundle.get('objects', []))}", err=True)
+    else:
+        click.echo(json_mod.dumps(bundle, indent=2, default=str))
+
+    store.close()
+
+
+@export_cti.command("thehive")
+@click.option("--entity", default=None, help="Seed entity for attack path export")
+@click.option("--query", "query_text", default=None, help="Query text to select triplets")
+@click.option("--since", default=None, help="Filter triplets after this date")
+@click.option("--until", default=None, help="Filter triplets before this date")
+@click.option("--hops", default=2, type=int, help="Graph traversal hops")
+@click.option("--alert-title", default=None, help="TheHive alert title")
+@click.option("--output", "-o", default=None, help="Output file path")
+@click.option("--push", "do_push", is_flag=True, help="Push to TheHive instance")
+@click.pass_context
+def export_thehive(ctx, entity, query_text, since, until, hops, alert_title, output, do_push):
+    """Export triplets as a TheHive alert."""
+    import json as json_mod
+
+    from .export.thehive_adapter import TheHiveExporter
+
+    config = ctx.obj["config"]
+    triplets, path, store = _select_triplets(ctx, entity, query_text, hops, since, until)
+    if triplets is None:
+        return
+
+    exporter = TheHiveExporter(config)
+    kwargs = {}
+    if alert_title:
+        kwargs["title"] = alert_title
+
+    if path:
+        click.echo(f"Exporting attack path as TheHive alert: {len(path.steps)} steps", err=True)
+        alert = exporter.export_attack_path(path, **kwargs)
+    else:
+        click.echo(f"Exporting {len(triplets)} triplets as TheHive alert", err=True)
+        alert = exporter.export_triplets(triplets, **kwargs)
+
+    if do_push:
+        try:
+            result = exporter.push(alert)
+            if result.get("error"):
+                click.echo(f"Push failed: {result.get('message', 'unknown error')}", err=True)
+            else:
+                click.echo("Alert created in TheHive", err=True)
+        except (ImportError, ValueError) as e:
+            click.echo(f"Push failed: {e}", err=True)
+    elif output:
+        exporter.to_file(alert, Path(output))
+        click.echo(f"TheHive alert written to {output}", err=True)
+        click.echo(f"  Observables: {len(alert.get('observables', []))}", err=True)
+    else:
+        click.echo(json_mod.dumps(alert, indent=2, default=str))
+
+    store.close()
+
+
 def main():
     cli()
 
