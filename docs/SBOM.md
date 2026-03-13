@@ -1,7 +1,7 @@
 ---
 title: Software Bill of Materials
 scope: Dependency inventory, SBOM generation, license compliance, and supply chain security for KGCP
-last_updated: 2026-03-11
+last_updated: 2026-03-12
 ---
 
 # Software Bill of Materials (SBOM)
@@ -58,6 +58,32 @@ These are the packages declared in `pyproject.toml` that KGCP directly imports a
 |---------|--------------------|---------|---------|
 | tiktoken | >=0.7.0 | Precise BPE token estimation (cl100k_base) | MIT |
 
+### Optional — CTI Export (`pip install kgcp[cti]`)
+
+| Package | Version Constraint | Purpose | License |
+|---------|--------------------|---------|---------|
+| stix2 | >=3.0.0 | STIX 2.1 SDO/SRO/bundle generation | BSD-3-Clause |
+
+### Optional — CTI Platform Push (`pip install kgcp[cti-platforms]`)
+
+Includes the `[cti]` extra plus platform SDKs for remote push. These are lazy-imported — only needed when using `--push`.
+
+| Package | Version Constraint | Purpose | License |
+|---------|--------------------|---------|---------|
+| pymisp | >=2.4.180 | MISP event creation and push via REST API | BSD-2-Clause |
+| pycti | >=6.0.0 | OpenCTI STIX bundle import via GraphQL | Apache-2.0 |
+| thehive4py | >=2.0.0 | TheHive alert/observable creation via REST API | AGPL-3.0 |
+
+### Optional — TAXII Server (`pip install kgcp[taxii]`)
+
+Includes the `[cti]` extra plus web server dependencies for the TAXII 2.1 endpoint.
+
+| Package | Version Constraint | Purpose | License |
+|---------|--------------------|---------|---------|
+| fastapi | >=0.115.0 | ASGI web framework for TAXII 2.1 endpoints | MIT |
+| uvicorn | >=0.32.0 | ASGI server to run the FastAPI application | BSD-3-Clause |
+| httpx | >=0.27.0 | Async HTTP client (used in TAXII test suite) | BSD-3-Clause |
+
 ### Development (`pip install kgcp[dev]`)
 
 | Package | Version Constraint | Purpose | License |
@@ -75,8 +101,9 @@ Two optional parsing dependencies use copyleft licenses that may affect distribu
 |---------|---------|--------|
 | PyMuPDF | AGPL-3.0 | Requires source disclosure if KGCP is distributed as a network service with PDF parsing enabled. No impact for local CLI use. |
 | html2text | GPL-3.0 | Requires source disclosure if distributed in a combined work. No impact for local CLI use or when installed separately as an optional dependency. |
+| thehive4py | AGPL-3.0 | Same AGPL implications as PyMuPDF. Only installed with `[cti-platforms]` extra; no impact for local use without TheHive push. |
 
-These packages are optional extras, not core dependencies. Users who need to avoid copyleft obligations can install KGCP without the `[parsing]` extra and use only plaintext, Markdown, and code file ingestion.
+These packages are optional extras, not core dependencies. Users who need to avoid copyleft obligations can install KGCP without the `[parsing]` and `[cti-platforms]` extras.
 
 ## Vulnerability Scanning
 

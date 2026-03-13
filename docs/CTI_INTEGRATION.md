@@ -8,7 +8,7 @@ last_updated: 2026-03-12
 
 KGCP exports its knowledge graph to five CTI formats and platforms. The export layer sits on top of the retrieval layer — it takes the same triplets and attack paths you query via `kgcp query` and `kgcp paths`, converts them to platform-native structures, and optionally pushes them to a remote instance.
 
-## Architecture
+## Architecture and Adapter Pipeline
 
 ```mermaid
 graph TD
@@ -28,47 +28,29 @@ graph TD
     G -->|thehive4py| K[TheHive Instance]
 
     D --> L[TAXII 2.1 Server]
-    L -->|HTTP GET| M[TAXII Consumers]
+    L -->|HTTP GET :9500| M[TAXII Consumers]
 
     style C fill:#f9f,stroke:#333
     style L fill:#bbf,stroke:#333
 ```
 
-## Export Registry
-
-All adapters register via `register_exporter(name, class)` in `kgcp/export/__init__.py`. The registry pattern mirrors the existing format registry in the packing module.
-
-```python
-from kgcp.export import get_exporter, list_exporters
-
-# List available adapters
-list_exporters()  # ['stix', 'misp', 'opencti', 'thehive']
-
-# Get a configured exporter
-exporter = get_exporter("stix", config)
-bundle = exporter.export_triplets(triplets)
-```
-
-## Adapter Pipeline
-
-Every adapter inherits from `BaseExporter` and implements two methods:
+All adapters register via `register_exporter(name, class)` in `kgcp/export/__init__.py`, mirroring the packing module's format registry. Every adapter inherits from `BaseExporter` and implements two core methods:
 
 | Method | Input | Output |
 |--------|-------|--------|
 | `export_triplets(triplets, entities)` | List of `Triplet` objects | Platform-native dict |
 | `export_attack_path(path)` | `AttackPath` object | Platform-native dict |
 
-Additional methods: `push(data)` sends to a remote platform, `to_file(data, path)` writes JSON.
+Additional methods: `push(data)` sends to a remote platform, `to_file(data, path)` writes JSON. The programmatic API works the same way across all adapters:
 
-### Input Sanitization
+```python
+from kgcp.export import get_exporter, list_exporters
 
-All entity names are sanitized before export via `BaseExporter._sanitize_entity_name()`:
-- Control characters (U+0000-U+001F, U+007F-U+009F) stripped
-- ANSI escape sequences stripped
-- Truncated to 512 characters
-- Leading/trailing whitespace removed
+exporter = get_exporter("stix", config)
+bundle = exporter.export_triplets(triplets)
+```
 
-Error responses from remote platforms are sanitized via `_sanitize_error()` (1000-char max, escape stripping).
+All entity names are sanitized before export — control characters, ANSI escapes, and excessive length (>512 chars) are stripped. Error responses from remote platforms are truncated to 1000 characters with escape sequences removed.
 
 ## STIX 2.1 Adapter
 
@@ -355,76 +337,29 @@ max_content_length = 10000000
 
 Environment variable: `KGCP_TAXII_API_KEY`
 
-## Installation
+## Installation and Usage
 
-The CTI module has tiered optional dependencies:
+The CTI module has tiered optional dependencies. All platform SDKs are lazy-imported — you only need them if you use `--push` or `serve-taxii`.
 
-```bash
-# STIX 2.1 + ATT&CK mapping only
-pip install -e ".[cti]"
+| Extra | Install Command | Packages | Purpose |
+|-------|----------------|----------|---------|
+| `cti` | `pip install -e ".[cti]"` | `stix2>=3.0.0` | STIX 2.1 bundle generation |
+| `cti-platforms` | `pip install -e ".[cti-platforms]"` | `pymisp`, `pycti`, `thehive4py` | Push to MISP/OpenCTI/TheHive |
+| `taxii` | `pip install -e ".[taxii]"` | `fastapi`, `uvicorn`, `httpx` | TAXII 2.1 server |
 
-# All platform SDKs (PyMISP, pycti, thehive4py)
-pip install -e ".[cti-platforms]"
+The export module lives in `kgcp/export/` (8 files: registry, base class, entity type map, ATT&CK mapper, and 4 platform adapters) and the TAXII server in `kgcp/server/taxii.py`.
 
-# TAXII server (FastAPI + uvicorn)
-pip install -e ".[taxii]"
-
-# Everything
-pip install -e ".[all,cti-platforms,taxii]"
-```
-
-| Extra | Packages | Purpose |
-|-------|----------|---------|
-| `cti` | `stix2>=3.0.0` | STIX 2.1 bundle generation |
-| `cti-platforms` | `pymisp`, `pycti`, `thehive4py` | Push to MISP/OpenCTI/TheHive |
-| `taxii` | `fastapi`, `uvicorn`, `httpx` | TAXII 2.1 server |
-
-All platform SDKs are lazy-imported — you only need them if you use `--push` or `serve-taxii`.
-
-## Module Structure
-
-```
-kgcp/export/
-  __init__.py          # ExportRegistry — register/get/list exporters
-  base.py              # BaseExporter ABC — sanitization, entity collection
-  entity_type_map.py   # KGCP-to-STIX type and predicate mappings
-  attack_mapper.py     # MITRE ATT&CK technique matcher
-  stix_adapter.py      # STIX 2.1 bundle generator
-  misp_adapter.py      # MISP event/attribute exporter
-  opencti_adapter.py   # OpenCTI STIX bundle enrichment + push
-  thehive_adapter.py   # TheHive alert/observable exporter
-
-kgcp/server/
-  __init__.py
-  taxii.py             # TAXII 2.1 FastAPI application
-```
-
-## End-to-End Example
-
-A complete workflow from document ingestion to CTI platform delivery:
+A complete end-to-end workflow from ingestion to CTI platform delivery:
 
 ```bash
-# 1. Ingest a threat intelligence report
-kgcp ingest ~/reports/apt28-campaign.pdf
-
-# 2. Create a baseline for anomaly detection
-kgcp baseline create --label "post-apt28-ingest"
-
-# 3. Ingest a second report to detect new patterns
-kgcp ingest ~/reports/apt28-update.pdf
-
-# 4. Check anomalies
-kgcp anomalies --entity apt28 --min-score 0.3
-
-# 5. Reconstruct attack path
-kgcp paths apt28 --format timeline
-
-# 6. Export to all CTI platforms
-kgcp export-cti stix --entity APT28 -o apt28-bundle.json
-kgcp export-cti misp --entity APT28 --push
-kgcp export-cti opencti --entity APT28 --push
-kgcp export-cti thehive --entity APT28 --push
-
-# 7. Start TAXII server for pull-based distribution
-kgcp serve-taxii --host 0.0.0.0 --port 9500
+kgcp ingest ~/reports/apt28-campaign.pdf          # 1. Ingest
+kgcp baseline create --label "post-apt28-ingest"   # 2. Baseline
+kgcp ingest ~/reports/apt28-update.pdf             # 3. Ingest update
+kgcp anomalies --entity apt28 --min-score 0.3      # 4. Detect anomalies
+kgcp paths apt28 --format timeline                 # 5. Reconstruct attack path
+kgcp export-cti stix --entity APT28 -o bundle.json # 6a. Export STIX
+kgcp export-cti misp --entity APT28 --push         # 6b. Push to MISP
+kgcp export-cti opencti --entity APT28 --push      # 6c. Push to OpenCTI
+kgcp export-cti thehive --entity APT28 --push      # 6d. Push to TheHive
+kgcp serve-taxii --host 0.0.0.0 --port 9500        # 7. Start TAXII server
 ```

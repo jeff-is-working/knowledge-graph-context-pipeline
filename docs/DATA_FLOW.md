@@ -1,12 +1,12 @@
 ---
 title: Data Flow
-scope: Mermaid sequence diagrams for every major data path through KGCP — ingestion, querying, anomaly detection, and attack path reconstruction
-last_updated: 2026-03-11
+scope: Mermaid sequence diagrams for every major data path through KGCP — ingestion, querying, anomaly detection, attack path reconstruction, CTI export, and TAXII serving
+last_updated: 2026-03-12
 ---
 
 # Data Flow
 
-This document traces how data moves through KGCP's six layers. Each flow is drawn from the verified execution paths in the codebase: CLI entry point → helper functions → storage/computation → output. For the layer descriptions and design decisions behind these flows, see [Architecture](ARCHITECTURE.md).
+This document traces how data moves through KGCP's seven layers. Each flow is drawn from the verified execution paths in the codebase: CLI entry point → helper functions → storage/computation → output. For the layer descriptions and design decisions behind these flows, see [Architecture](ARCHITECTURE.md). For CTI-specific data mappings and platform configuration, see [CTI Integration](CTI_INTEGRATION.md).
 
 ## Document Ingestion
 
@@ -182,6 +182,73 @@ sequenceDiagram
 
     CLI->>Packer: pack(attack_path, format="timeline")
     Packer-->>User: Temporally-ordered attack chain with anomaly annotations
+```
+
+## CTI Export
+
+The `export-cti` commands select triplets from the store (by entity, query, or full graph), convert them to a platform-native format via the appropriate adapter, and either write to a file or push to a remote CTI platform. This flow covers MISP, OpenCTI, and TheHive — the STIX adapter is the base that all others compose or build upon.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant CLI as cli.py (export-cti)
+    participant Store as SQLiteStore
+    participant Graph as GraphCache
+    participant Paths as attack_paths.py
+    participant Exporter as Platform Adapter
+    participant Remote as CTI Platform
+
+    User->>CLI: kgcp export-cti misp --entity APT28 --push
+    CLI->>CLI: _select_triplets(entity="APT28")
+    CLI->>Store: get_all_triplets()
+    CLI->>Graph: build_from_triplets(triplets)
+    CLI->>Paths: reconstruct(seed="APT28", graph, store)
+    Paths-->>CLI: AttackPath
+
+    CLI->>Exporter: export_attack_path(path)
+    Note over Exporter: Maps entities to platform types,<br/>maps anomaly to severity/threat level,<br/>adds ATT&CK tags if matches found
+    Exporter-->>CLI: platform-native dict
+
+    alt --push flag
+        CLI->>Exporter: push(data)
+        Note over Exporter: Lazy-imports platform SDK<br/>(PyMISP / pycti / thehive4py)
+        Exporter->>Remote: API call (HTTPS)
+        Remote-->>Exporter: response
+        Note over Exporter: Sanitize error responses<br/>before returning to user
+        Exporter-->>CLI: {status, id}
+    else -o file.json
+        CLI->>Exporter: to_file(data, path)
+    else default
+        CLI-->>User: JSON to stdout
+    end
+```
+
+## TAXII 2.1 Server
+
+The `serve-taxii` command starts a FastAPI server that serves STIX bundles from the live KGCP graph. External consumers poll the TAXII endpoints to pull STIX objects. Each request builds a fresh bundle from the current triplet store.
+
+```mermaid
+sequenceDiagram
+    participant Client as TAXII Consumer
+    participant Server as FastAPI (taxii.py)
+    participant Auth as verify_api_key
+    participant Store as SQLiteStore
+    participant STIX as STIXExporter
+
+    Client->>Server: GET /taxii2/ (Authorization: Bearer key)
+    Server->>Auth: validate API key
+    Auth-->>Server: OK
+    Server-->>Client: Discovery (API roots, title)
+
+    Client->>Server: GET /api/collections/kgcp-all-triplets/objects/?added_after=2025-06-01
+    Server->>Auth: validate API key
+    Server->>Store: get_all_triplets()
+    Store-->>Server: Triplet[]
+    Server->>Server: filter by added_after
+    Server->>STIX: export_triplets(filtered)
+    Note over STIX: Generates deterministic STIX 2.1<br/>bundle with SDOs + SROs
+    STIX-->>Server: STIX bundle dict
+    Server-->>Client: application/stix+json;version=2.1
 ```
 
 ## Data Lifecycle

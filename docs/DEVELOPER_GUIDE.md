@@ -1,7 +1,7 @@
 ---
 title: Developer Guide
 scope: Development setup, coding conventions, testing strategy, and module walkthrough for KGCP contributors
-last_updated: 2026-03-11
+last_updated: 2026-03-12
 ---
 
 # Developer Guide
@@ -10,7 +10,7 @@ last_updated: 2026-03-11
 
 For prerequisites, installation, and configuration, see [README Getting Started](../README.md#getting-started). After cloning and installing with `pip install -e ".[dev,all]"`, verify your setup by running the test suite.
 
-The `[dev]` extra installs pytest and pytest-cov. The `[all]` extra installs parsing (PyMuPDF, beautifulsoup4), Claude integration (anthropic), and token counting (tiktoken) dependencies.
+The `[dev]` extra installs pytest and pytest-cov. The `[all]` extra installs parsing (PyMuPDF, beautifulsoup4), Claude integration (anthropic), token counting (tiktoken), and CTI (stix2) dependencies. For CTI platform push and TAXII server, install `[cti-platforms]` and `[taxii]` separately — see [SBOM](SBOM.md) for details.
 
 ## Project Structure
 
@@ -53,6 +53,17 @@ kgcp/
 │       ├── compact_format.py # Arrow notation
 │       ├── markdown_format.py # Markdown table
 │       └── nl_format.py      # Natural language prose
+├── export/                   # CTI export adapters
+│   ├── __init__.py           # ExportRegistry — register_exporter/get_exporter
+│   ├── base.py               # BaseExporter with sanitization helpers
+│   ├── entity_types.py       # KGCP-to-STIX entity type mapping
+│   ├── stix_adapter.py       # STIX 2.1 bundle generation
+│   ├── attack_mapper.py      # MITRE ATT&CK keyword matching
+│   ├── misp_adapter.py       # MISP event/attribute export + PyMISP push
+│   ├── opencti_adapter.py    # OpenCTI-enriched STIX + pycti/REST push
+│   └── thehive_adapter.py    # TheHive alert/observable export + push
+├── server/                   # Network server components
+│   └── taxii.py              # TAXII 2.1 FastAPI server (read-only)
 └── integration/              # Output delivery
     ├── claude_api.py         # Anthropic SDK integration
     └── output.py             # stdout / clipboard / file writing
@@ -74,7 +85,7 @@ kgcp/
 
 ## Testing
 
-The test suite uses pytest with 218 tests across 17 files. Tests do not require an LLM endpoint — they exercise storage, retrieval, scoring, packing, anomaly detection, temporal analysis, and CLI commands using in-memory SQLite databases.
+The test suite uses pytest with 421 tests across 27 files. Tests do not require an LLM endpoint — they exercise storage, retrieval, scoring, packing, anomaly detection, temporal analysis, CTI export, TAXII server, and CLI commands using in-memory SQLite databases. CTI platform push tests are skipped when optional SDKs (pymisp, pycti, thehive4py) are not installed.
 
 Run the full suite from the project root:
 
@@ -118,6 +129,14 @@ Run with coverage:
 | `test_unified_scorer.py` | Cross-algebra scoring | 25 |
 | `test_attack_paths.py` | Attack path reconstruction | 12 |
 | `test_fusion_cli.py` | CLI unified/paths commands | 9 |
+| `test_stix_adapter.py` | STIX 2.1 bundle generation, deterministic IDs | 18 |
+| `test_attack_mapper.py` | ATT&CK technique matching | 10 |
+| `test_misp_adapter.py` | MISP event/attribute export, push | 42 |
+| `test_opencti_adapter.py` | OpenCTI enrichment, push strategies | 24 |
+| `test_thehive_adapter.py` | TheHive alert/observable export, push | 38 |
+| `test_base_exporter.py` | Input sanitization, error sanitization | 15 |
+| `test_export_cli.py` | CLI export-cti commands | 12 |
+| `test_taxii_server.py` | TAXII 2.1 endpoints, auth, filtering | 21 |
 
 ### Writing New Tests
 
@@ -132,3 +151,5 @@ Follow existing patterns: use `tempfile.TemporaryDirectory` for test databases, 
 **Adding a new anomaly signal**: Add a `_signal_<name>()` function in `kgcp/anomaly/scorer.py`, include it in the scoring loop, and add a default weight to the `signal_weights` section in `config.py` and `config.toml`.
 
 **Adjusting fusion weights**: Edit the `[fusion.weights]` section in `config.toml` or `DEFAULTS["fusion"]["weights"]` in `config.py`. Weights should sum to 1.0.
+
+**Adding a new CTI exporter**: Create an adapter class inheriting from `BaseExporter` in `kgcp/export/`, implement `export_triplets()` and `export_attack_path()`, register it with `register_exporter("name", MyAdapter)` in `kgcp/export/__init__.py`, and add a CLI subcommand in `cli.py`. See [CTI Integration](CTI_INTEGRATION.md) for the adapter pipeline and data mapping conventions.

@@ -1,25 +1,29 @@
 ---
 title: Security
 scope: Threat model, data protection, security controls, SBOM requirements, and incident response for KGCP
-last_updated: 2026-03-11
+last_updated: 2026-03-12
 ---
 
 # Security
 
-KGCP is a local CLI tool that processes documents through an LLM and stores structured knowledge in SQLite. This document covers the threat model, security controls, and operational security considerations.
+KGCP is a local CLI tool that processes documents through an LLM and stores structured knowledge in SQLite. It can also export data to remote CTI platforms (MISP, OpenCTI, TheHive) and serve STIX bundles via a TAXII 2.1 server. This document covers the threat model, security controls, and operational security considerations.
 
 ## Threat Model
 
-KGCP's attack surface spans four boundaries: document ingestion, LLM communication, local storage, and output delivery. The primary risks involve untrusted input processing and credential exposure.
+KGCP's attack surface spans six boundaries: document ingestion, LLM communication, local storage, output delivery, CTI platform push, and TAXII server exposure. The primary risks involve untrusted input processing, credential exposure, and network-facing services.
 
 | Threat | Attack Vector | Impact | Likelihood |
 |--------|--------------|--------|------------|
 | LLM prompt injection via documents | Malicious text in ingested documents influences extraction prompts | Corrupted triplets, misleading knowledge graph | Medium |
 | API key exposure | Keys in config.toml committed to version control or logged | Unauthorized LLM/Claude API usage | Medium |
+| CTI platform credential exposure | MISP/OpenCTI/TheHive API keys in config or env vars leaked | Unauthorized access to CTI platforms, data injection | Medium |
+| Entity injection into CTI platforms | Crafted entity names with control chars or ANSI escapes pushed to remote platforms | XSS or log injection in downstream CTI UIs | Medium (mitigated by sanitization) |
+| TAXII server network exposure | TAXII server bound to 0.0.0.0 without API key | Unauthorized access to full knowledge graph via HTTP | Medium (mitigated by auth) |
 | SQLite injection | Crafted entity names in extracted triplets | Data corruption or exfiltration | Low (parameterized queries used) |
 | Path traversal in parser | Malicious file paths passed to ingestion | File read outside intended scope | Low (Path normalization used) |
 | Clipboard exfiltration | Sensitive context copied to clipboard persists | Data leakage via clipboard history | Low |
 | Denial of service via large documents | Extremely large files consume memory during chunking | Process crash or system slowdown | Low |
+| CTI platform timeout abuse | Slow/unresponsive remote platform holds connection indefinitely | Process hang, resource exhaustion | Low (mitigated by timeouts) |
 
 ## Security Controls
 
@@ -33,6 +37,12 @@ KGCP's attack surface spans four boundaries: document ingestion, LLM communicati
 | Foreign key enforcement | `PRAGMA foreign_keys=ON` ensures referential integrity | `kgcp/storage/sqlite_store.py` |
 | File type validation | Parser registry only processes known extensions; unknown types fall back to UTF-8 text or raise `ValueError` | `kgcp/ingestion/parser_registry.py` |
 | LLM timeout | HTTP requests to the LLM endpoint timeout after 120 seconds | `kgcp/extraction/llm_client.py` |
+| Entity name sanitization | Control characters, ANSI escapes, and null bytes stripped; names truncated to 512 chars before export | `kgcp/export/base.py` |
+| Error message sanitization | Remote platform error responses stripped of escape sequences and truncated to 1000 chars before display | `kgcp/export/base.py` |
+| CTI push timeouts | All remote platform push operations timeout after 120 seconds (configurable per platform) | `kgcp/export/misp_adapter.py`, `thehive_adapter.py` |
+| TAXII API key authentication | Bearer token auth on all TAXII endpoints; server runs open only if no key is configured | `kgcp/server/taxii.py` |
+| TAXII content limits | Maximum 10,000 objects per response; `max_content_length` configurable | `kgcp/server/taxii.py` |
+| CTI credential isolation | Platform API keys loaded via dedicated env vars (`KGCP_MISP_API_KEY`, etc.) separate from LLM keys | `kgcp/config.py` |
 
 ## Data Protection
 
@@ -40,9 +50,11 @@ KGCP's attack surface spans four boundaries: document ingestion, LLM communicati
 
 **Data in transit**: Communication with the LLM endpoint uses HTTP by default (Ollama on localhost). When using remote LLM endpoints or the Claude API, connections use HTTPS. The Anthropic SDK enforces TLS for all API calls.
 
-**Credential handling**: The default `config.toml` ships with a placeholder API key (`sk-1234`). Production API keys should be set via environment variables (`KGCP_API_KEY`, `ANTHROPIC_API_KEY`) rather than stored in config files. The `.gitignore` excludes `.db` files but does not exclude `config.toml` — users should avoid committing files with real credentials.
+**Credential handling**: The default `config.toml` ships with a placeholder API key (`sk-1234`). Production API keys should be set via environment variables (`KGCP_API_KEY`, `ANTHROPIC_API_KEY`, `KGCP_MISP_API_KEY`, `KGCP_OPENCTI_API_KEY`, `KGCP_THEHIVE_API_KEY`, `KGCP_TAXII_API_KEY`) rather than stored in config files. The `.gitignore` excludes `.db` files but does not exclude `config.toml` — users should avoid committing files with real credentials.
 
 **Output handling**: Packed context sent to clipboard or files may contain sensitive extracted knowledge. The `--to-file` option writes plaintext. Users should be aware that clipboard contents may be logged by clipboard managers.
+
+**CTI export**: Data pushed to remote CTI platforms (MISP, OpenCTI, TheHive) travels over HTTPS. All entity names are sanitized before export to prevent injection into downstream platform UIs. STIX bundles written to files or served via TAXII contain the full subgraph for the queried entity — review before sharing.
 
 ## Software Bill of Materials (SBOM)
 
@@ -55,6 +67,9 @@ KGCP maintains a full dependency inventory with license compliance analysis and 
 | Critical | API key compromised, database contains sensitive data exposed | Rotate keys immediately, assess data exposure, delete and recreate the database if needed |
 | High | LLM prompt injection producing systematically corrupted triplets | Identify affected documents, delete them with `kgcp baseline delete` + re-ingest, review extraction prompts |
 | Medium | Unauthorized access to knowledge.db file | Restrict file permissions, assess what data was stored, consider encrypting the database |
+| High | CTI platform API key compromised | Rotate key on the affected platform immediately, audit push history for unauthorized data, update env vars |
+| Medium | TAXII server exposed to untrusted network | Stop the server, review access logs, restrict bind address to localhost or add API key auth |
+| Medium | Malicious entity names pushed to CTI platform | Sanitization should prevent this; if bypassed, review affected events/alerts on the platform, re-export with updated KGCP |
 | Low | Stale or inaccurate triplets from poor extraction quality | Re-ingest with a better model, create a new baseline, review anomaly scores |
 
 ## Recommendations
@@ -65,3 +80,5 @@ KGCP maintains a full dependency inventory with license compliance analysis and 
 4. **Review extracted triplets** before feeding them to Claude for high-stakes decisions — LLM extraction is imperfect and may hallucinate relationships.
 5. **Generate and review SBOMs** before deploying to shared or regulated environments.
 6. **Run `pip-audit`** regularly to check for known vulnerabilities in dependencies.
+7. **Configure TAXII API key** before binding the server to a non-localhost address. Running open on `0.0.0.0` exposes the full knowledge graph to the network.
+8. **Use separate API keys** for each CTI platform rather than sharing a single credential across MISP, OpenCTI, and TheHive.
