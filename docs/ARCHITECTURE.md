@@ -1,7 +1,7 @@
 ---
 title: Architecture
 scope: System design, data model, data flow, API surface, and design decisions for KGCP
-last_updated: 2026-03-11
+last_updated: 2026-03-12
 ---
 
 # Architecture
@@ -25,6 +25,12 @@ graph LR
     I -.->|scores| E
     D -.->|temporal fields| J[Trend Analysis]
     J -.->|recency| E
+
+    E -->|triplets + paths| K[CTI Export]
+    K -->|STIX 2.1| L[File / TAXII]
+    K -->|events| M[MISP]
+    K -->|bundles| N[OpenCTI]
+    K -->|alerts| O[TheHive]
 ```
 
 ## Layer Descriptions
@@ -40,6 +46,8 @@ graph LR
 **Context Packing** (`kgcp/packing/`) serializes ranked triplets into one of four output formats within a token budget. YAML is the default because research shows it achieves 34-38% fewer tokens than JSON for equivalent information.
 
 **Integration** (`kgcp/integration/`) delivers packed context to stdout, clipboard, file, or directly to Claude via the Anthropic SDK.
+
+**CTI Export** (`kgcp/export/`) converts triplets and attack paths to CTI platform formats: STIX 2.1 bundles, MISP events, OpenCTI-enriched bundles, and TheHive alerts. Includes MITRE ATT&CK technique mapping and a TAXII 2.1 read-only server for pull-based distribution. For full details, see [CTI Integration](CTI_INTEGRATION.md).
 
 ## Data Model
 
@@ -88,6 +96,12 @@ All commands are registered via Click under the `kgcp` entry point defined in `p
 | `kgcp baseline delete <ID>` | Remove a baseline and its scores | |
 | `kgcp anomalies` | Score and surface anomalous relationships | `--since`, `--min-score`, `--limit`, `--entity`, `--format` |
 | `kgcp trends` | Detect frequency trends in relationships | `--entity`, `--window`, `--since/--until`, `--format`, `--limit` |
+| `kgcp export-cti stix` | Export as STIX 2.1 bundle | `--entity`, `--query`, `--since/--until`, `--hops`, `-o` |
+| `kgcp export-cti attack-map` | Show MITRE ATT&CK technique matches | `--entity`, `--query`, `--hops`, `--max-matches`, `--update` |
+| `kgcp export-cti misp` | Export as MISP event | `--entity`, `--query`, `--event-info`, `--push`, `-o` |
+| `kgcp export-cti opencti` | Export as OpenCTI STIX bundle | `--entity`, `--query`, `--push`, `-o` |
+| `kgcp export-cti thehive` | Export as TheHive alert | `--entity`, `--query`, `--push`, `-o` |
+| `kgcp serve-taxii` | Start TAXII 2.1 server | `--host`, `--port` |
 
 ## Design Decisions
 

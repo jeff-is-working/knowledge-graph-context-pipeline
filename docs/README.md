@@ -1,7 +1,7 @@
 ---
 title: Documentation Index
 scope: Navigation hub for all KGCP project documentation
-last_updated: 2026-03-11
+last_updated: 2026-03-12
 ---
 
 # KGCP Documentation
@@ -17,6 +17,7 @@ last_updated: 2026-03-11
 | [Security](SECURITY.md) | Threat model, data protection, security controls |
 | [SBOM](SBOM.md) | Dependency inventory, license compliance, vulnerability scanning |
 | [Data Flow](DATA_FLOW.md) | Mermaid sequence diagrams for ingestion, querying, anomaly detection, and attack paths |
+| [CTI Integration](CTI_INTEGRATION.md) | STIX 2.1, MISP, OpenCTI, TheHive, TAXII 2.1 — architecture, data mapping, configuration, CLI usage |
 | [Design Journal](../DESIGN.md) | Phase-by-phase implementation history and Lambert's Four Algebras framework |
 
 ## Documentation Methodology

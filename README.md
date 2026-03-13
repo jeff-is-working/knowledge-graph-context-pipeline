@@ -1,7 +1,7 @@
 ---
 title: KGCP — Knowledge Graph Context Pipeline
 scope: Project overview, getting started, CLI reference, and links to detailed documentation
-last_updated: 2026-03-11
+last_updated: 2026-03-12
 ---
 
 # Knowledge Graph Context Pipeline (KGCP)
@@ -22,9 +22,11 @@ graph LR
     D -->|query + score| E[Retrieval]
     E -->|ranked triplets| F[Context Packing]
     F -->|YAML / compact / md / nl| G[Claude / stdout / clipboard]
+    E -->|triplets + paths| H[CTI Export]
+    H --> I[STIX / MISP / OpenCTI / TheHive / TAXII]
 ```
 
-Six layers: Ingestion (multi-format parsing) — Extraction (SPO via LLM) — Storage (SQLite + NetworkX) — Retrieval (keyword + N-hop + unified scoring) — Packing (4 output formats) — Integration (Claude API + clipboard + file).
+Seven layers: Ingestion (multi-format parsing) — Extraction (SPO via LLM) — Storage (SQLite + NetworkX) — Retrieval (keyword + N-hop + unified scoring) — Packing (4 output formats) — Integration (Claude API + clipboard + file) — CTI Export (STIX 2.1 + platform adapters).
 
 ## Getting Started
 
@@ -99,6 +101,21 @@ kgcp trends --entity apt28 --window 30 --format table
 kgcp stats --communities --anomalies
 ```
 
+### CTI Export
+
+Export the knowledge graph to CTI platforms. STIX 2.1 is the base format; MISP, OpenCTI, and TheHive adapters convert to platform-native structures. A read-only TAXII 2.1 server provides pull-based distribution.
+
+```bash
+kgcp export-cti stix --entity APT28 -o bundle.json
+kgcp export-cti misp --entity APT28 --push
+kgcp export-cti opencti --entity APT28 --push
+kgcp export-cti thehive --entity APT28 --push
+kgcp export-cti attack-map --entity APT28
+kgcp serve-taxii --host 0.0.0.0 --port 9500
+```
+
+Install CTI extras: `pip install -e ".[cti-platforms,taxii]"`. For full configuration and data mapping details, see [docs/CTI_INTEGRATION.md](docs/CTI_INTEGRATION.md).
+
 For the full CLI reference with all options, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#cli-command-reference).
 
 ## Output Formats
@@ -134,6 +151,7 @@ Markdown tables and natural language prose are also available via `--format mark
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Configuration, operations, troubleshooting |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model, data protection, security controls |
 | [docs/SBOM.md](docs/SBOM.md) | Dependency inventory, license compliance, vulnerability scanning |
+| [docs/CTI_INTEGRATION.md](docs/CTI_INTEGRATION.md) | STIX 2.1, MISP, OpenCTI, TheHive, TAXII — config, mapping, usage |
 | [DESIGN.md](DESIGN.md) | Phase-by-phase implementation history |
 
 ## License
