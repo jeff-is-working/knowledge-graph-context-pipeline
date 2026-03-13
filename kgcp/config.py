@@ -72,6 +72,34 @@ DEFAULTS: dict[str, Any] = {
         },
         "recency_window_days": 90,
     },
+    "cti": {
+        "attack_data_path": str(Path("~/.kgcp/enterprise-attack.json").expanduser()),
+        "stix": {
+            "default_confidence": 50,
+            "identity_name": "KGCP",
+        },
+        "misp": {
+            "url": "",
+            "api_key": "",
+            "verify_ssl": True,
+            "default_distribution": 0,
+            "default_threat_level": 2,
+            "default_analysis": 0,
+            "publish_on_push": False,
+        },
+        "opencti": {
+            "url": "",
+            "api_key": "",
+            "verify_ssl": True,
+        },
+        "thehive": {
+            "url": "",
+            "api_key": "",
+            "verify_ssl": True,
+            "default_severity": 2,
+            "default_tlp": 2,
+        },
+    },
 }
 
 
@@ -119,5 +147,19 @@ def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
         config["llm"]["model"] = env_model
     if env_db := os.environ.get("KGCP_DB_PATH"):
         config["storage"]["db_path"] = env_db
+
+    # CTI platform environment variable overrides
+    if env_val := os.environ.get("KGCP_MISP_URL"):
+        config.setdefault("cti", {}).setdefault("misp", {})["url"] = env_val
+    if env_val := os.environ.get("KGCP_MISP_API_KEY"):
+        config.setdefault("cti", {}).setdefault("misp", {})["api_key"] = env_val
+    if env_val := os.environ.get("KGCP_OPENCTI_URL"):
+        config.setdefault("cti", {}).setdefault("opencti", {})["url"] = env_val
+    if env_val := os.environ.get("KGCP_OPENCTI_API_KEY"):
+        config.setdefault("cti", {}).setdefault("opencti", {})["api_key"] = env_val
+    if env_val := os.environ.get("KGCP_THEHIVE_URL"):
+        config.setdefault("cti", {}).setdefault("thehive", {})["url"] = env_val
+    if env_val := os.environ.get("KGCP_THEHIVE_API_KEY"):
+        config.setdefault("cti", {}).setdefault("thehive", {})["api_key"] = env_val
 
     return config

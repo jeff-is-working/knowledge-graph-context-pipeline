@@ -30,8 +30,17 @@ claude = [
 tokens = [
     "tiktoken>=0.7.0",
 ]
+cti = [
+    "stix2>=3.0.0",
+]
+cti-platforms = [
+    "kgcp[cti]",
+    "pymisp>=2.4.180",
+    "thehive4py>=2.0.0",
+    "pycti>=6.0.0",
+]
 all = [
-    "kgcp[parsing,claude,tokens]",
+    "kgcp[parsing,claude,tokens,cti]",
 ]
 dev = [
     "pytest>=8.0.0",

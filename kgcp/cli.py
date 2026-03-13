@@ -800,6 +800,184 @@ def paths(ctx, entity, hops, since, until, min_anomaly, limit, fmt, to_file, bud
     store.close()
 
 
+@cli.group("export-cti")
+def export_cti():
+    """Export knowledge graph to CTI platforms (STIX, MISP, OpenCTI, TheHive)."""
+    pass
+
+
+@export_cti.command("stix")
+@click.option("--entity", default=None, help="Seed entity for attack path export")
+@click.option("--query", "query_text", default=None, help="Query text to select triplets")
+@click.option("--since", default=None, help="Filter triplets after this date")
+@click.option("--until", default=None, help="Filter triplets before this date")
+@click.option("--hops", default=2, type=int, help="Graph traversal hops (default: 2)")
+@click.option("--output", "-o", default=None, help="Output file path")
+@click.pass_context
+def export_stix(ctx, entity, query_text, since, until, hops, output):
+    """Export triplets or attack paths as a STIX 2.1 bundle."""
+    import json as json_mod
+
+    from .export.stix_adapter import STIXExporter
+    from .temporal.date_utils import parse_date
+
+    config = ctx.obj["config"]
+    store = _get_store(config)
+    exporter = STIXExporter(config)
+
+    parsed_since = None
+    parsed_until = None
+    if since:
+        try:
+            parsed_since = parse_date(since)
+        except ValueError as e:
+            click.echo(f"Invalid --since value: {e}", err=True)
+            store.close()
+            return
+    if until:
+        try:
+            parsed_until = parse_date(until)
+        except ValueError as e:
+            click.echo(f"Invalid --until value: {e}", err=True)
+            store.close()
+            return
+
+    if entity:
+        # Attack path mode
+        from .retrieval.attack_paths import reconstruct_attack_path
+
+        path = reconstruct_attack_path(
+            seed_entity=entity, store=store, hops=hops,
+            since=parsed_since, until=parsed_until,
+        )
+        if not path.steps:
+            click.echo(f"No attack path found for '{entity}'.", err=True)
+            store.close()
+            return
+        click.echo(
+            f"Exporting attack path: {len(path.steps)} steps, "
+            f"{len(path.entities_involved)} entities",
+            err=True,
+        )
+        bundle = exporter.export_attack_path(path)
+    elif query_text:
+        # Query mode
+        retriever = Retriever(store)
+        triplets = retriever.query(query_text, hops=hops)
+        if not triplets:
+            click.echo("No matching triplets found.", err=True)
+            store.close()
+            return
+        click.echo(f"Exporting {len(triplets)} triplets as STIX 2.1", err=True)
+        bundle = exporter.export_triplets(triplets)
+    else:
+        # Full graph export
+        triplets = store.get_all_triplets()
+        if not triplets:
+            click.echo("No triplets to export.", err=True)
+            store.close()
+            return
+        click.echo(f"Exporting all {len(triplets)} triplets as STIX 2.1", err=True)
+        bundle = exporter.export_triplets(triplets)
+
+    content = json_mod.dumps(bundle, indent=2, default=str)
+
+    if output:
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).write_text(content)
+        click.echo(f"STIX bundle written to {output}", err=True)
+        click.echo(f"  Objects: {len(bundle['objects'])}", err=True)
+    else:
+        click.echo(content)
+
+    store.close()
+
+
+@export_cti.command("attack-map")
+@click.option("--entity", default=None, help="Seed entity to map")
+@click.option("--query", "query_text", default=None, help="Query text to select triplets")
+@click.option("--hops", default=2, type=int, help="Graph traversal hops")
+@click.option("--max-matches", default=3, type=int, help="Max ATT&CK matches per triplet")
+@click.option("--update", is_flag=True, help="Download fresh ATT&CK data")
+@click.option(
+    "--format", "-f", "fmt",
+    default="table",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    help="Output format",
+)
+@click.pass_context
+def export_attack_map(ctx, entity, query_text, hops, max_matches, update, fmt):
+    """Map triplets to MITRE ATT&CK techniques."""
+    import json as json_mod
+
+    from .export.attack_mapper import AttackMapper
+
+    config = ctx.obj["config"]
+    store = _get_store(config)
+
+    cache_path = config.get("cti", {}).get("attack_data_path")
+    mapper = AttackMapper(cache_path=Path(cache_path) if cache_path else None)
+
+    if update:
+        click.echo("Downloading fresh ATT&CK data...", err=True)
+        mapper.ensure_data(force_download=True)
+        click.echo(f"Loaded {len(mapper._techniques)} techniques", err=True)
+
+    # Select triplets
+    if entity:
+        from .retrieval.attack_paths import reconstruct_attack_path
+        path = reconstruct_attack_path(seed_entity=entity, store=store, hops=hops)
+        triplets = [s.triplet for s in path.steps]
+    elif query_text:
+        retriever = Retriever(store)
+        triplets = retriever.query(query_text, hops=hops)
+    else:
+        triplets = store.get_all_triplets()
+
+    if not triplets:
+        click.echo("No triplets found.", err=True)
+        store.close()
+        return
+
+    click.echo(f"Mapping {len(triplets)} triplets to ATT&CK...", err=True)
+    results = mapper.match_triplets(triplets, max_results_per=max_matches)
+
+    if not results:
+        click.echo("No ATT&CK technique matches found.", err=True)
+        store.close()
+        return
+
+    if fmt == "json":
+        data = {
+            tid: [
+                {
+                    "technique_id": m.technique_id,
+                    "technique_name": m.technique_name,
+                    "confidence": round(m.match_confidence, 3),
+                    "tactic": m.tactic,
+                    "matched_on": m.matched_on,
+                }
+                for m in matches
+            ]
+            for tid, matches in results.items()
+        }
+        click.echo(json_mod.dumps(data, indent=2))
+    else:
+        click.echo(
+            f"{'Technique':14s}  {'Name':30s}  {'Confidence':>10s}  {'Tactic':20s}  Matched On"
+        )
+        click.echo("-" * 110)
+        for tid, matches in results.items():
+            for m in matches:
+                click.echo(
+                    f"{m.technique_id:14s}  {m.technique_name[:30]:30s}  "
+                    f"{m.match_confidence:10.3f}  {m.tactic[:20]:20s}  {m.matched_on[:40]}"
+                )
+
+    click.echo(f"\n{len(results)} triplets matched to ATT&CK techniques", err=True)
+    store.close()
+
+
 def main():
     cli()
 
