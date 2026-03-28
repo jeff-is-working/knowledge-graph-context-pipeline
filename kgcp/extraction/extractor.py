@@ -13,6 +13,8 @@ from .confidence import score_triplets
 from .llm_client import call_llm, extract_json_from_text
 from .normalizer import deduplicate_triplets, standardize_entities
 from .prompts import EXTRACTION_SYSTEM_PROMPT, EXTRACTION_USER_PROMPT
+from .sanitizer import sanitize_for_prompt, detect_injection_signals
+from .validator import validate_triplets, format_validation_report
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +49,38 @@ def chunk_text(text: str, chunk_size: int = 100, overlap: int = 20) -> list[str]
 def extract_triplets_from_text(
     text: str,
     config: dict[str, Any],
+    force: bool = False,
 ) -> list[dict]:
     """Extract raw SPO triplets from a text chunk via LLM.
+
+    Applies input sanitization before prompt interpolation and validates
+    extracted triplets for prompt injection indicators.
+
+    Args:
+        text: Raw text chunk (untrusted).
+        config: Pipeline configuration.
+        force: If True, include flagged triplets with a warning instead
+               of dropping them.
 
     Returns:
         List of dicts with 'subject', 'predicate', 'object' keys.
     """
-    prompt = EXTRACTION_USER_PROMPT.format(text=text)
+    # Layer 1: Sanitize input text
+    sanitized = sanitize_for_prompt(text)
+    if not sanitized.clean:
+        logger.info("Input sanitized: %s", ", ".join(sanitized.stripped))
+
+    # Layer 1b: Check for injection signals in source text
+    signals = detect_injection_signals(sanitized.text)
+    high_signals = [s for s in signals if s["severity"] == "high"]
+    if high_signals:
+        logger.warning(
+            "High-severity injection signals detected in source text (%d signals)",
+            len(high_signals),
+        )
+
+    # Layer 2: Prompt with untrusted-input guardrails (in prompts.py)
+    prompt = EXTRACTION_USER_PROMPT.format(text=sanitized.text)
 
     try:
         response = call_llm(prompt, config, system_prompt=EXTRACTION_SYSTEM_PROMPT)
@@ -75,6 +102,23 @@ def extract_triplets_from_text(
                 "predicate": str(t["predicate"]).lower().strip(),
                 "object": str(t["object"]).lower().strip(),
             })
+
+    # Layer 3: Post-extraction validation
+    validation = validate_triplets(valid)
+    if not validation.clean:
+        report = format_validation_report(validation)
+        logger.warning("Post-extraction validation:\n%s", report)
+
+        if validation.flagged and not force:
+            # Drop flagged triplets, keep clean ones
+            flagged_set = set(validation.flagged_indices)
+            clean_triplets = [t for i, t in enumerate(valid) if i not in flagged_set]
+            logger.warning(
+                "Dropped %d flagged triplets (use force=True to override)",
+                len(flagged_set),
+            )
+            return clean_triplets
+
     return valid
 
 
