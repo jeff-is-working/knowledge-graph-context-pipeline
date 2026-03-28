@@ -27,4 +27,3 @@ htmlcov/
 *.db
 RESEARCH.md
 .gitnexus
-src/frontend/.vite/
