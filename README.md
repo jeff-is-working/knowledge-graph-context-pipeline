@@ -1,7 +1,7 @@
 ---
 title: KGCP — Knowledge Graph Context Pipeline
 scope: Project overview, getting started, CLI reference, and links to detailed documentation
-last_updated: 2026-03-12
+last_updated: 2026-03-27
 ---
 
 # Knowledge Graph Context Pipeline (KGCP)
@@ -149,7 +149,9 @@ Markdown tables and natural language prose are also available via `--format mark
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data model, design decisions |
 | [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) | Dev setup, coding conventions, testing |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Configuration, operations, troubleshooting |
-| [docs/SECURITY.md](docs/SECURITY.md) | Threat model, data protection, security controls |
+| [docs/SECURITY.md](docs/SECURITY.md) | Threat model, prompt injection defense, security controls |
+| [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md) | Operational procedures, maintenance workflows, daily administration |
+| [docs/INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) | Network architecture, LLM deployment, backup/recovery, capacity planning |
 | [docs/SBOM.md](docs/SBOM.md) | Dependency inventory, license compliance, vulnerability scanning |
 | [docs/CTI_INTEGRATION.md](docs/CTI_INTEGRATION.md) | STIX 2.1, MISP, OpenCTI, TheHive, TAXII — config, mapping, usage |
 | [DESIGN.md](DESIGN.md) | Phase-by-phase implementation history |

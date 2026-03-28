@@ -1,7 +1,7 @@
 ---
 title: Documentation Index
 scope: Navigation hub for all KGCP project documentation
-last_updated: 2026-03-12
+last_updated: 2026-03-27
 ---
 
 # KGCP Documentation
@@ -14,7 +14,9 @@ last_updated: 2026-03-12
 | [Architecture](ARCHITECTURE.md) | System design, data model, data flow, design decisions |
 | [Developer Guide](DEVELOPER_GUIDE.md) | Development setup, coding conventions, testing, module walkthrough |
 | [Deployment](DEPLOYMENT.md) | Installation, LLM configuration, operations, troubleshooting |
-| [Security](SECURITY.md) | Threat model, data protection, security controls |
+| [Security](SECURITY.md) | Threat model, prompt injection defense, data protection, security controls |
+| [Admin Guide](ADMIN_GUIDE.md) | Operational procedures, maintenance workflows, daily administration |
+| [Infrastructure](INFRASTRUCTURE.md) | Network architecture, LLM deployment, backup/recovery, capacity planning |
 | [SBOM](SBOM.md) | Dependency inventory, license compliance, vulnerability scanning |
 | [Data Flow](DATA_FLOW.md) | Mermaid sequence diagrams for ingestion, querying, anomaly detection, and attack paths |
 | [CTI Integration](CTI_INTEGRATION.md) | STIX 2.1, MISP, OpenCTI, TheHive, TAXII 2.1 — architecture, data mapping, configuration, CLI usage |

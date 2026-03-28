@@ -1,7 +1,7 @@
 ---
 title: Architecture
 scope: System design, data model, data flow, API surface, and design decisions for KGCP
-last_updated: 2026-03-12
+last_updated: 2026-03-27
 ---
 
 # Architecture
@@ -37,7 +37,7 @@ graph LR
 
 **Ingestion** (`kgcp/ingestion/`) parses documents into text chunks. The parser registry supports plaintext, Markdown, HTML, PDF (via PyMuPDF), and source code files. Paragraph-aware chunking splits text into overlapping word-level windows (default 100 words, 20-word overlap).
 
-**Extraction** (`kgcp/extraction/`) sends each chunk to an OpenAI-compatible LLM endpoint (Ollama recommended) with a system prompt that requests Subject-Predicate-Object triplets as JSON. Responses are parsed with fault-tolerant JSON extraction that handles code blocks, trailing commas, and truncated arrays. Extracted triplets are normalized (lowercase, deduplication), scored for confidence via predicate-specificity heuristics, and standardized to merge equivalent entities.
+**Extraction** (`kgcp/extraction/`) sends each chunk to an OpenAI-compatible LLM endpoint (Ollama recommended) with a system prompt that requests Subject-Predicate-Object triplets as JSON. A 4-layer prompt injection defense protects this stage: input sanitization strips control characters and detects injection signals before the LLM sees the text, prompt guardrails frame document content as untrusted DATA with boundary delimiters, post-extraction validation scans triplets for injection patterns and drops flagged results, and context boundary markers protect downstream Claude integration. Responses are parsed with fault-tolerant JSON extraction that handles code blocks, trailing commas, and truncated arrays. Extracted triplets are normalized (lowercase, deduplication), scored for confidence via predicate-specificity heuristics, and standardized to merge equivalent entities. For the full security model, see [Security](SECURITY.md#prompt-injection-defense).
 
 **Storage** (`kgcp/storage/`) persists triplets, documents, entities, baselines, and anomaly scores in SQLite with WAL mode and foreign key enforcement. An in-memory NetworkX directed graph (`GraphCache`) mirrors the triplet store for fast traversal, centrality computation, and Louvain community detection.
 

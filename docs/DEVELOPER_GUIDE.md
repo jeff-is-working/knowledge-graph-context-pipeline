@@ -1,7 +1,7 @@
 ---
 title: Developer Guide
 scope: Development setup, coding conventions, testing strategy, and module walkthrough for KGCP contributors
-last_updated: 2026-03-12
+last_updated: 2026-03-27
 ---
 
 # Developer Guide
@@ -28,7 +28,9 @@ kgcp/
 │   ├── llm_client.py         # OpenAI-compatible API client
 │   ├── prompts.py            # System/user prompt templates
 │   ├── normalizer.py         # Entity standardization and deduplication
-│   └── confidence.py         # Heuristic confidence scoring
+│   ├── confidence.py         # Heuristic confidence scoring
+│   ├── sanitizer.py          # Input text sanitization (control chars, injection signals)
+│   └── validator.py          # Post-extraction triplet injection pattern detection
 ├── storage/                  # Persistence layer
 │   ├── sqlite_store.py       # SQLiteStore — all CRUD, baselines, anomaly scores
 │   ├── graph_cache.py        # NetworkX in-memory graph (centrality, communities)
@@ -85,7 +87,7 @@ kgcp/
 
 ## Testing
 
-The test suite uses pytest with 421 tests across 27 files. Tests do not require an LLM endpoint — they exercise storage, retrieval, scoring, packing, anomaly detection, temporal analysis, CTI export, TAXII server, and CLI commands using in-memory SQLite databases. CTI platform push tests are skipped when optional SDKs (pymisp, pycti, thehive4py) are not installed.
+The test suite uses pytest with 492 tests across 29 files. Tests do not require an LLM endpoint — they exercise storage, retrieval, scoring, packing, anomaly detection, temporal analysis, CTI export, TAXII server, and CLI commands using in-memory SQLite databases. CTI platform push tests are skipped when optional SDKs (pymisp, pycti, thehive4py) are not installed.
 
 Run the full suite from the project root:
 
@@ -116,6 +118,8 @@ Run with coverage:
 | `test_extraction.py` | Chunking, JSON extraction | 8 |
 | `test_confidence.py` | Confidence scoring heuristics | 5 |
 | `test_normalizer.py` | Entity normalization, dedup | 5 |
+| `test_sanitizer.py` | Input sanitization, injection signal detection | 20 |
+| `test_validator.py` | Post-extraction triplet validation | 16 |
 | `test_graph_cache.py` | NetworkX graph operations | 5 |
 | `test_retrieval.py` | Query, hop expansion, unified scoring | 7 |
 | `test_packing.py` | All 4 output formats, budget, unified scores | 12 |

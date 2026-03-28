@@ -1,7 +1,7 @@
 ---
 title: Security
 scope: Threat model, data protection, security controls, SBOM requirements, and incident response for KGCP
-last_updated: 2026-03-12
+last_updated: 2026-03-27
 ---
 
 # Security
@@ -14,7 +14,7 @@ KGCP's attack surface spans six boundaries: document ingestion, LLM communicatio
 
 | Threat | Attack Vector | Impact | Likelihood |
 |--------|--------------|--------|------------|
-| LLM prompt injection via documents | Malicious text in ingested documents influences extraction prompts | Corrupted triplets, misleading knowledge graph | Medium |
+| LLM prompt injection via documents | Malicious text in ingested documents influences extraction prompts | Corrupted triplets, misleading knowledge graph | Medium (mitigated by 4-layer defense) |
 | API key exposure | Keys in config.toml committed to version control or logged | Unauthorized LLM/Claude API usage | Medium |
 | CTI platform credential exposure | MISP/OpenCTI/TheHive API keys in config or env vars leaked | Unauthorized access to CTI platforms, data injection | Medium |
 | Entity injection into CTI platforms | Crafted entity names with control chars or ANSI escapes pushed to remote platforms | XSS or log injection in downstream CTI UIs | Medium (mitigated by sanitization) |
@@ -25,11 +25,28 @@ KGCP's attack surface spans six boundaries: document ingestion, LLM communicatio
 | Denial of service via large documents | Extremely large files consume memory during chunking | Process crash or system slowdown | Low |
 | CTI platform timeout abuse | Slow/unresponsive remote platform holds connection indefinitely | Process hang, resource exhaustion | Low (mitigated by timeouts) |
 
+## Prompt Injection Defense
+
+KGCP processes untrusted documents through an LLM extraction pipeline, making it susceptible to prompt injection attacks where malicious content in ingested documents manipulates the extraction process. A 4-layer defense-in-depth mitigation protects the pipeline at every stage.
+
+| Layer | Module | Defense | Blocks At |
+|-------|--------|---------|-----------|
+| Input Sanitization | `kgcp/extraction/sanitizer.py` | Strips control characters (0x00-0x08, 0x0B-0x1F, 0x7F-0x9F), ANSI escape sequences, and enforces length limits. Scans for injection signal phrases (instruction override, role manipulation, system prompt probing, exfiltration attempts, encoded payloads) with context-aware false positive reduction for legitimate CTI content. | Before LLM sees the text |
+| Prompt Guardrails | `kgcp/extraction/prompts.py` | Explicit untrusted-input preamble in the system prompt instructs the LLM to treat document content as DATA, not INSTRUCTIONS. Boundary delimiters (`--- BEGIN/END DOCUMENT TEXT ---`) clearly separate instructions from content. | During LLM processing |
+| Post-Extraction Validation | `kgcp/extraction/validator.py` | Scans extracted triplets across all fields (subject, predicate, object) for 7 injection pattern categories plus structural checks (empty fields, suspiciously long entities). Severity scoring (none/low/medium/high) with automatic dropping of medium+ flagged triplets. | After extraction, before storage |
+| Context Boundary Markers | `kgcp/integration/claude_api.py` | Wraps packed triplet context in explicit boundary delimiters with DATA-only instructions when injecting into Claude's system prompt. Prevents indirect prompt injection through stored triplet content. | During context injection |
+
+The pipeline drops flagged triplets by default, preserving clean triplets from the same document. The `force=True` parameter overrides validation blocking when false positives are certain. All security events are logged for audit.
+
 ## Security Controls
 
 | Control | Implementation | Location |
 |---------|---------------|----------|
 | Parameterized SQL queries | All database operations use `?` placeholders, never string interpolation | `kgcp/storage/sqlite_store.py` |
+| Input text sanitization | Control characters, ANSI escapes stripped from document text before prompt interpolation; injection signals logged | `kgcp/extraction/sanitizer.py` |
+| Prompt injection guardrails | Untrusted-input framing in system prompt; boundary delimiters separate instructions from content | `kgcp/extraction/prompts.py` |
+| Post-extraction triplet validation | Extracted triplets scanned for injection patterns; flagged triplets dropped by default | `kgcp/extraction/validator.py` |
+| Context boundary markers | Packed context wrapped in DATA-only delimiters in Claude system prompts | `kgcp/integration/claude_api.py` |
 | Input validation on extraction | LLM responses are parsed through fault-tolerant JSON extraction that rejects non-dict objects | `kgcp/extraction/llm_client.py` |
 | Entity normalization | All extracted entities are lowercased and stripped, reducing injection surface | `kgcp/extraction/extractor.py` |
 | API key via environment variable | `KGCP_API_KEY` and `ANTHROPIC_API_KEY` env vars avoid hardcoding secrets | `kgcp/config.py`, `kgcp/integration/claude_api.py` |
@@ -65,7 +82,7 @@ KGCP maintains a full dependency inventory with license compliance analysis and 
 | Severity | Description | Response |
 |----------|-------------|----------|
 | Critical | API key compromised, database contains sensitive data exposed | Rotate keys immediately, assess data exposure, delete and recreate the database if needed |
-| High | LLM prompt injection producing systematically corrupted triplets | Identify affected documents, delete them with `kgcp baseline delete` + re-ingest, review extraction prompts |
+| High | LLM prompt injection bypassing the 4-layer defense | Review validator patterns in `sanitizer.py` and `validator.py`, add new detection patterns, re-ingest affected documents, create new baseline |
 | Medium | Unauthorized access to knowledge.db file | Restrict file permissions, assess what data was stored, consider encrypting the database |
 | High | CTI platform API key compromised | Rotate key on the affected platform immediately, audit push history for unauthorized data, update env vars |
 | Medium | TAXII server exposed to untrusted network | Stop the server, review access logs, restrict bind address to localhost or add API key auth |

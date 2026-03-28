@@ -1,7 +1,7 @@
 ---
 title: Data Flow
 scope: Mermaid sequence diagrams for every major data path through KGCP — ingestion, querying, anomaly detection, attack path reconstruction, CTI export, and TAXII serving
-last_updated: 2026-03-12
+last_updated: 2026-03-27
 ---
 
 # Data Flow
@@ -18,8 +18,10 @@ sequenceDiagram
     participant CLI as cli.py (ingest)
     participant Parser as parser_registry
     participant Chunker as chunker
+    participant Sanitizer as sanitizer
     participant LLM as llm_client
     participant Extractor as extractor
+    participant Validator as validator
     participant Normalizer as normalizer
     participant Scorer as confidence
     participant Store as SQLiteStore
@@ -35,13 +37,22 @@ sequenceDiagram
 
     loop Each chunk
         CLI->>Extractor: extract_triplets_from_text(chunk)
-        Extractor->>LLM: call_llm(system_prompt, chunk)
+        Note over Sanitizer: Layer 1 — Input Sanitization
+        Extractor->>Sanitizer: sanitize_for_prompt(chunk)
+        Sanitizer-->>Extractor: SanitizeResult (stripped control chars, ANSI)
+        Extractor->>Sanitizer: detect_injection_signals(text)
+        Sanitizer-->>Extractor: signals[] (logged if high severity)
+        Note over LLM: Layer 2 — Prompt Guardrails (untrusted-input framing)
+        Extractor->>LLM: call_llm(system_prompt, sanitized_chunk)
         LLM-->>Extractor: JSON response
         Extractor->>Extractor: extract_json_from_text(response)
+        Note over Validator: Layer 3 — Post-Extraction Validation
+        Extractor->>Validator: validate_triplets(raw_triplets)
+        Validator-->>Extractor: ValidationResult (flagged triplets dropped)
         Extractor->>Normalizer: normalize_entity(subject), normalize_entity(object)
         Extractor->>Extractor: limit_predicate_length(predicate)
         Extractor->>Scorer: score_triplet(triplet)
-        Scorer-->>Extractor: Triplet (confidence 0.0–1.0)
+        Scorer-->>Extractor: Triplet (confidence 0.0-1.0)
     end
 
     CLI->>Store: add_document(doc)
